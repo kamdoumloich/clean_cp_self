@@ -1,3 +1,4 @@
+import os
 from logging import raiseExceptions
 
 import numpy as np
@@ -71,6 +72,7 @@ class WeightedRank2DPredictor:
             return_counts=True,
         )
 
+        save_path = f"{self.path_logs}precalibration_result_{self.seed}_alpha{self.alpha}.npz"
         kept_pat_ids = [
             pat_id
             for pat_id, n_z in enumerate(counts.tolist())
@@ -93,14 +95,33 @@ class WeightedRank2DPredictor:
             c_idx_global[inv == pat_id] = current_pattern_id
             current_pattern_id += 1
 
-        optimization_tool = OptimizeWithSolver()
-        best_result = optimization_tool.optimize_w_for_all_patterns_simultaneously(
-            p_orig=self.allProbDist[0],
-            p_aug=self.allProbDist[1],
-            y=self.allTargets,
-            index_by_pattern=c_idx_global,
-            alpha=self.alpha,
-        )
+        if os.path.exists(save_path):
+            print("Loading weights...")
+            data = np.load(save_path, allow_pickle=True)
+
+            best_result = {
+                "status": data["status"].item(),
+                "objective": float(data["objective"]),
+                "u": data["u"],
+                "z": data["z"],
+                "coverage_proxy": float(data["coverage_proxy"]),
+                "avg_set_size_proxy": float(data["avg_set_size_proxy"]),
+                "tau": float(data["tau"]) if data["tau"] is not None else None,
+                "M": float(data["M"]),
+                "runtime": float(data["runtime"]),
+                "mip_gap": float(data["mip_gap"]) if data["mip_gap"] is not None else None,
+            }
+
+        else:
+
+            optimization_tool = OptimizeWithSolver()
+            best_result = optimization_tool.optimize_w_for_all_patterns_simultaneously(
+                p_orig=self.allProbDist[0],
+                p_aug=self.allProbDist[1],
+                y=self.allTargets,
+                index_by_pattern=c_idx_global,
+                alpha=self.alpha,
+            )
 
         if best_result is None or best_result.get("tau") is None:
             self.u_global = 1.0
@@ -190,6 +211,23 @@ class WeightedRank2DPredictor:
                         f.write("\n")
 
                 f.write("*" * 20 + "\n")
+
+
+
+            np.savez(
+                save_path,
+                status=best_result["status"],
+                objective=best_result["objective"],
+                u=best_result["u"],
+                z=best_result["z"],
+                coverage_proxy=best_result["coverage_proxy"],
+                avg_set_size_proxy=best_result["avg_set_size_proxy"],
+                tau=best_result["tau"],
+                M=best_result["M"],
+                runtime=best_result["runtime"],
+                mip_gap=best_result["mip_gap"],
+            )
+
         print("Precalibration done")
 
     def create_pattern_1d(self, probDist_orig, probDist_aug):
