@@ -30,12 +30,6 @@ dict_augmentations = {
     "ROTATION": 10,
 }
 
-# alpha = 0.01
-# # alpha = 0.1
-
-# is_robust = False
-# min_pattern_support = 10
-
 latex_file_name = f"ClassWeightedRankBasedRobust{is_robust}.tex"
 
 
@@ -44,14 +38,14 @@ if dataset == 'cifar':
 
     latex_file_name = f"ClassWeightedRankBased{seed_nber}Robust{is_robust}.tex"
 
-    path_logs = "./latex/cifar/"+str(seed_nber)+"/"
+    path_logs = "./logs/cifar/"+str(seed_nber)+"/"
 
     selected_benchmark = benchmarks.cifar.CIFARBenchmark(augmentations=dict_augmentations, seed=seed_nber,
                                                          robust_training=is_robust, path_logs=path_logs)
     n_classes = 10
 elif dataset == 'mnist':
 
-    path_logs = "./latex/mnist/"+str(seed_nber)+"/"
+    path_logs = "./logs/mnist/"+str(seed_nber)+"/"
 
     selected_benchmark = benchmarks.mnist.MNISTBenchmark(augmentations=dict_augmentations, seed=seed_nber,
                                                          robust_training=is_robust, path_logs=path_logs)
@@ -68,7 +62,6 @@ weightedApproach = approaches.weightedRankBased.WeightedRank2DPredictor(precalib
                                                                         path_logs = path_logs,
                                                                         )
 
-# ayratsApproach = approaches.twoD.Ayrats2DPredictor()
 interestingCaseFilter = interestingcasefilters.largedeviation.LargeDeviationInterestingCaseFilter(1.0 - alpha)
 compact.runCompleteEvaluation(texTargetFile=str(path_logs)+""+str(latex_file_name), benchmark=selected_benchmark,
                               conformanceApproaches=[baseApproach,weightedApproach,],
