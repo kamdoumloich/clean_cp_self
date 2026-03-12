@@ -65,7 +65,7 @@ class MNISTBenchmark:
 
     Maybe later support for cross-validation is added 
   """
-  def __init__(self, augmentations, seed=42, robust_training=False):
+  def __init__(self, augmentations, path_logs, seed=42, robust_training=False):
 
     # Define fields
     self.augmentations=augmentations # Copied
@@ -74,6 +74,7 @@ class MNISTBenchmark:
     self.testing_data = None
     self.accuracies = {}
     self.seed = seed
+    self.path_logs = path_logs
 
     # Base settings
     DEVICE = ("cuda" if torch.cuda.is_available() else "cpu")
@@ -89,12 +90,12 @@ class MNISTBenchmark:
 
     self.basepath = os.path.dirname(__file__)
 
-    model_specification = "_" + "_".join(f"{k}{v}" for k, v in self.augmentations.items())
+    model_specification = "" + "_".join(f"{k}{v}" for k, v in self.augmentations.items())
 
     if robust_training:
-        self.path_saved_model = f"benchmarks/cnn_mnist_robust_{DEVICE}_SEED{seed}{model_specification}.pt"
+        self.path_saved_model = f"{self.path_logs}cnn_mnist_robust_{DEVICE}_ITERATION{ITERATIONS}_{model_specification}.pt"
     else:
-        self.path_saved_model = f"benchmarks/cnn_mnist_{DEVICE}_SEED{seed}{model_specification}.pt"
+        self.path_saved_model = f"{self.path_logs}cnn_mnist_{DEVICE}_ITERATION{ITERATIONS}_{model_specification}.pt"
     
     transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),])
 

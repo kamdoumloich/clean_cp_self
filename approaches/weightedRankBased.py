@@ -2,24 +2,36 @@ from logging import raiseExceptions
 
 import numpy as np
 
+from approaches.optimizeWithSolver import OptimizeWithSolver
+
 
 class WeightedRank2DPredictor:
 
-    def __init__(self, precalibration_data, n_classes:int = 10, seed: int = 2026):
+    def __init__(self, precalibration_data, alpha, path_logs, n_classes:int = 10, seed: int = 2026,
+                 min_samples_per_pattern: int = 1, verbose: bool = True):
         self.n_classes = n_classes
         self.seed = seed
         self.dict_pattern_and_w = {}
+        self.min_samples_per_pattern = int(min_samples_per_pattern)
+        self.alpha = alpha
+        self.verbose = verbose
+        self.path_logs = path_logs
 
 
         tmp_probDistributions, tmp_targets = zip(*precalibration_data)
         self.allProbDist = np.asarray(list(zip(*tmp_probDistributions)))
         self.allTargets = np.asarray(tmp_targets)
 
+        self.amount_samples = self.allTargets.shape[0]
+
         del tmp_probDistributions, tmp_targets
         self.n_augmentations = len(self.allProbDist[0])-1
 
         assert self.allProbDist.shape[0] == 2, "At the moment the approach works only with one augmentation"
 
+        # A pattern is a vector that contains the ordered position of the concatened probability distribution for both probDist
+        # e.g.: [7 8 3 0 9 1 6 4 2 5 7 9 3 0 8 1 6 4 2 5] -> The highest probDist for Orig correspond to the 4rd class (1-based index)
+        #       [0 9 3 6 8 4 1 2 7 5 0 9 3 6 8 4 1 2 7 5] -> The highest probDist for Orig correspond to the 1st class (1-based index)
         self.extracted_patterns = self.create_patterns(self.allProbDist[0], self.allProbDist[1])
 
         print("Initalization done.")
@@ -46,76 +58,139 @@ class WeightedRank2DPredictor:
         ranks_per_classes_orig[row_idx, order_orig] = col_ranks
         ranks_per_classes_aug[row_idx, order_aug] = col_ranks
 
-        return np.hstack(tup=(ranks_per_classes_orig, ranks_per_classes_aug), dtype=int)
+        return np.concatenate([ranks_per_classes_orig, ranks_per_classes_aug], axis=1).astype(np.int64)
 
+        # return np.hstack(tup=(ranks_per_classes_orig, ranks_per_classes_aug), dtype=int)
 
-    # def compute_weights_per_pattern(self,):
     def precalibrate(self):
-        np_unique_patterns, np_iverse_per_pattern, freq_unique_patterns = np.unique(self.extracted_patterns,
-                                                                                 axis=0,
-                                                                                 return_inverse=True,
-                                                                                 return_counts=True)
+        patterns = self.extracted_patterns
+        unique_pats, inv, counts = np.unique(
+            patterns,
+            axis=0,
+            return_inverse=True,
+            return_counts=True,
+        )
 
-        mask = freq_unique_patterns > 1
-        keep_ids = np.flatnonzero(mask)
+        kept_pat_ids = [
+            pat_id
+            for pat_id, n_z in enumerate(counts.tolist())
+            if n_z >= self.min_samples_per_pattern
+        ]
 
-        # gefilterte unique patterns und deren Frequenzen
-        np_unique_patterns_f = np_unique_patterns[mask]
+        # Reset stored mappings to avoid keeping stale values from previous calls
+        self.dict_pattern_and_w = {}
+        self.dict_pattern_to_w_vectors = {}
+        self.pattern_counts = {}
 
-        # Indizes pro behaltenem Pattern (bezogen auf np_all_patterns)
-        indices_per_pattern_f = [np.where(np_iverse_per_pattern == uid)[0] for uid in keep_ids] # n,d
+        # Global pattern index:
+        # 0 = fallback group containing all low-support patterns
+        c_idx_global = np.zeros((self.amount_samples,), dtype=np.int64)
+        current_pattern_id = 1
+        pat_to_global = {}
 
-        # Optimierung
-        for i, single_pattern in enumerate(np_unique_patterns_f):
-            print("Optimierung pattern: ", i+1," /", len(np_unique_patterns_f))
-            current_indices = indices_per_pattern_f[i]
+        for pat_id in kept_pat_ids:
+            pat_to_global[pat_id] = current_pattern_id
+            c_idx_global[inv == pat_id] = current_pattern_id
+            current_pattern_id += 1
 
-            # self.allProbDist
+        optimization_tool = OptimizeWithSolver()
+        best_result = optimization_tool.optimize_w_for_all_patterns_simultaneously(
+            p_orig=self.allProbDist[0],
+            p_aug=self.allProbDist[1],
+            y=self.allTargets,
+            index_by_pattern=c_idx_global,
+            alpha=self.alpha,
+        )
 
-            np_probDist_orig_current_pattern = self.allProbDist[0][current_indices]
-            np_probDist_aug_current_pattern = self.allProbDist[1][current_indices]
-            np_true_classes = self.allTargets[current_indices]
+        if best_result is None or best_result.get("tau") is None:
+            self.u_global = 1.0
+            self.tau_from_optimization = None
+            if self.verbose:
+                print("[precalibrate] optimization returned no incumbent solution.")
+            print("Precalibration done")
+            return
 
-            current_w = self.compute_weight_for_pattern(probDist_orig=np_probDist_orig_current_pattern,
-                                                        probDist_aug=np_probDist_aug_current_pattern,
-                                                        true_classes=np_true_classes)
-            key = tuple(single_pattern.tolist())
-            self.dict_pattern_and_w[key] = current_w
+        self.tau_from_optimization = float(best_result["tau"])
+        u_sol = np.asarray(best_result["u"], dtype=np.float64)
 
+        # Group 0 is the fallback group for all patterns below support threshold
+        self.u_global = float(u_sol[0])
+
+        for pat_id in kept_pat_ids:
+            pat_key = tuple(unique_pats[pat_id].tolist())
+            global_id = pat_to_global[pat_id]
+            w_value = float(u_sol[global_id])
+
+            self.dict_pattern_and_w[pat_key] = w_value
+            self.dict_pattern_to_w_vectors[pat_key] = w_value
+            self.pattern_counts[pat_key] = int(counts[pat_id])
+
+        # if self.verbose:
+        #     print("*" * 10)
+        #     print(f"[precalibrate] fallback u_global = {self.u_global}")
+        #     for key, value in self.dict_pattern_and_w.items():
+        #         print(f"{key} -> {value}")
+        #     print("*" * 10)
+        #     n_kept = len(self.dict_pattern_and_w)
+        #     n_total = len(unique_pats)
+        #     print(
+        #         f"[precalibrate] stored {n_kept}/{n_total} patterns "
+        #         f"(support >= {self.min_samples_per_pattern})."
+        #     )
+        #     print(f"[precalibrate] tau_from_optimization = {self.tau_from_optimization}")
+        #
+        #     print("*"*20)
+        #     print(best_result)
+        #     print("*"*20)
+
+        if self.verbose:
+            with open(f"{self.path_logs}precalibration_log_{self.seed}_alpha{self.alpha}.txt", "w") as f:
+                f.write("*" * 10 + "\n")
+                f.write(f"[precalibrate] fallback u_global = {self.u_global}\n")
+
+                for key, value in self.dict_pattern_and_w.items():
+                    f.write(f"{key} -> {value}\n")
+
+                f.write("*" * 10 + "\n")
+
+                n_kept = len(self.dict_pattern_and_w)
+                n_total = len(unique_pats)
+
+                f.write(
+                    f"[precalibrate] stored {n_kept}/{n_total} patterns "
+                    f"(support >= {self.min_samples_per_pattern}).\n"
+                )
+
+                f.write(
+                    f"[precalibrate] tau_from_optimization = {self.tau_from_optimization}\n"
+                )
+
+                f.write("*" * 20 + "\n")
+                f.write("[OPTIMIZER RESULTS]\n")
+
+                if best_result is None:
+                    f.write("None\n")
+                else:
+                    for key, value in best_result.items():
+                        f.write(f"{key}:\n")
+
+                        if isinstance(value, np.ndarray):
+                            f.write(
+                                np.array2string(
+                                    value,
+                                    threshold=np.inf,
+                                    max_line_width=np.inf,
+                                    separator=", "
+                                )
+                                + "\n"
+                            )
+                        else:
+                            f.write(f"{value}\n")
+
+                        f.write("\n")
+
+                f.write("*" * 20 + "\n")
         print("Precalibration done")
-
-
-
-    # 1-p
-    def compute_weight_for_pattern(self, probDist_orig: np.ndarray, probDist_aug: np.ndarray, true_classes: np.ndarray):
-
-        best_set_size = np.inf
-        best_w = 0
-
-        w_candidates = np.linspace(0, 1, 20)
-
-        for w in w_candidates:
-            combined_prob = (1-w) * probDist_orig + w * probDist_aug
-
-            set_size = self.get_setsize_precalibration_baseline(combined_prob, true_classes)
-            if best_set_size > set_size:
-                best_set_size = set_size
-                best_w = w
-                print(f"Best set size: {best_set_size} and best w: {best_w}")
-
-        return best_w
-
-
-    def get_setsize_precalibration_baseline(self, probDist: np.ndarray, true_classes):
-
-        inv_probDist = 1.0 - probDist
-        n = inv_probDist.shape[0]
-
-        cal_value_for_max_coverage = np.max(inv_probDist[np.arange(n), true_classes])
-
-        count = (inv_probDist <= cal_value_for_max_coverage).sum(axis=0) # n,1
-
-        return count.sum()
 
     def create_pattern_1d(self, probDist_orig, probDist_aug):
         """
@@ -158,23 +233,14 @@ class WeightedRank2DPredictor:
         pat = self.create_pattern_1d(probDistOrig, probDistAug)
         pat_key = tuple(pat.tolist())
 
-        pi = self.dict_pattern_and_w.get(pat_key, 0)
-
-        w_eff = pi
+        w_eff = self.dict_pattern_and_w.get(pat_key, 1.0)
 
         if w_eff == 0:
             return probDistOrig
 
-        # e.g. default_pi = global prior P(Z=1) for this class, or 0.5
-        weighted_prob = (1 - w_eff) * probDistOrig + w_eff * probDistAug
+        weighted_prob = w_eff * probDistOrig + (1 - w_eff) * probDistAug
 
-        # print(f"w_eff: {w_eff},\n weighted_prob: {weighted_prob}, probDistOrig: {probDistOrig}, probDistAug: {probDistAug}\n\n")
-
-        weighted_prob = np.maximum(weighted_prob, 0)
-        total = np.sum(weighted_prob)
-        normalized_prob = weighted_prob / total if total > 0 else probDistOrig
-
-        return normalized_prob
+        return weighted_prob
 
 
     def calibration(self, calibration_data):
@@ -187,8 +253,6 @@ class WeightedRank2DPredictor:
         resultSet = []
         weighted_prob_dist = self.compute_prob_dist(probDistOrig=probabilityDistributions[0],
                                                     probDistAug=probabilityDistributions[1])
-        # print("prediction")
-        # print(weighted_prob_dist)
 
         nextOne = None
         maxClassValue = 0.0
@@ -211,31 +275,8 @@ class WeightedRank2DPredictor:
         return resultSet,nextOne
 
 
-        # # ##############################################
-        # # # TODO: Predict following sum_max
-        # # ##############################################
-        # while (probabilityCoveredSoFar <= calibrationValue) and len(restClasses) > 0:
-        #     # Search for the remaining class Combination with the highest value
-
-        #     # if len(restClasses) == 0:
-
-        #     if max(weighted_prob_dist) <= 0:
-        #         done = True
-        #         break
-        #     probabilityCoveredSoFar += max(weighted_prob_dist)
-        #     resultSet.extend([int(np.argmax(weighted_prob_dist))])
-        #     weighted_prob_dist[np.argmax(weighted_prob_dist)] = -10
-        #     restClasses.difference_update(resultSet)
-
-        # # # Numerics Fall-Back: If probability sum was already 1 or above, add the rest of the classes
-        # if ((calibrationValue == 1.0) or done) and len(restClasses) > 0:
-        #     resultSet.extend(restClasses)
-
-        # # NextAfter....
-        # return resultSet, math.nextafter(probabilityCoveredSoFar, math.inf)
-
     def texInfo(self):
-        return """Basic 2D predictor. Takes class combination with the highest product until the probability mass of all combinations considered is greater than the calibrated value."""
+        return """Weighted 2D predictor. We extract patterns and use an optimizer to simulatneously find for each pattern which weight allows to reduce the overall set size."""
 
     def getShortName(self):
         return "weigted-rank-2D"
