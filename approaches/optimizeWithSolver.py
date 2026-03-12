@@ -39,7 +39,7 @@ class OptimizeWithSolver:
 
         model = Model("pattern_rank_u_global_tau")
         model.setParam("display/verblevel", 4 if self.verbose else 0)
-        model.setParam("limits/time", float(self.time_limit))
+        # model.setParam("limits/time", float(self.time_limit))
         model.setParam("limits/gap", float(self.mip_gap))
 
         ub_u = 1.0
