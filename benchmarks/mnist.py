@@ -91,6 +91,7 @@ class MNISTBenchmark:
     self.basepath = os.path.dirname(__file__)
 
     model_specification = "" + "_".join(f"{k}{v}" for k, v in self.augmentations.items())
+    os.makedirs(self.path_logs, exist_ok=True)
 
     if robust_training:
         self.path_saved_model = f"{self.path_logs}cnn_mnist_robust_{DEVICE}_ITERATION{ITERATIONS}_{model_specification}.pt"
