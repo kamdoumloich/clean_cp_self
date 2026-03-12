@@ -11,13 +11,14 @@ SEEDS=(2026 13007 49211 71023 98029 600011)
 
 MAX_PARALLEL=6
 
-LOG_DIR="./logs/${DATASET}}"
-mkdir -p "$LOG_DIR"
+LOG_DIR="./logs/${DATASET}"
+# mkdir -p "$LOG_DIR"
 
 run_job () {
     seed="$1"
 
-    log_file="${LOG_DIR}/${seed}/execution_log.log"
+    mkdir -p "$LOG_DIR/${seed}"
+    log_file="${LOG_DIR}/${seed}/output.log"
 
     echo "Starting seed ${seed}"
 
