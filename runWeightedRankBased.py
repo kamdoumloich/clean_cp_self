@@ -15,13 +15,13 @@ parser.add_argument("--seed", type=int, required=True)
 parser.add_argument("--dataset", type=str, required=True, choices=['mnist', 'cifar'])
 parser.add_argument("--robust", type=bool, choices=['True', 'False'], default=False)
 parser.add_argument("--alpha", type=float, required=True)
-parser.add_argument("--min_samples_per_pattern", type=int, default=15)
+parser.add_argument("--min_samples_per_pattern", type=int, default=10)
 
 # TODO: Minimal settings for my experiments
 parser.add_argument("--train_fraction", type=float, default=0.1)
 parser.add_argument("--test_fraction", type=float, default=0.1)
 parser.add_argument("--calibration_fraction", type=float, default=0.2)
-parser.add_argument("--precalibration_fraction", type=float, default=0.01)
+parser.add_argument("--precalibration_fraction", type=float, default=0.1)
 
 args = parser.parse_args()
 
@@ -40,6 +40,8 @@ dict_augmentations = {
     # "ROTATION": 10,
     "HUE": 0.1,
 }
+
+TRAIN_ITERATION = 4
 
 print("\n\n")
 print("*"*60)
@@ -63,6 +65,7 @@ if dataset == 'cifar':
                                                          test_fraction = test_fraction,
                                                          calibration_fraction = calibration_fraction,
                                                          precalibration_fraction = precalibration_fraction,
+                                                           iterations=TRAIN_ITERATION,
                                                         )
     n_classes = 10
 elif dataset == 'mnist':
