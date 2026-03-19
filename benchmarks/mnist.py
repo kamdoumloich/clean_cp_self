@@ -44,8 +44,8 @@ class MNistNet(nn.Module):
 class Augmentation(Enum):
     ORIGINAL = 'ORIGINAL'
     ROTATION = 'ROTATION'
-    TRANSLATION = 'TRANSLATION'
-    RANDOM_RESIZED_CROP = 'RANDOM-RESIZED-CROP'
+    # TRANSLATION = 'TRANSLATION'
+    # RANDOM_RESIZED_CROP = 'RANDOM-RESIZED-CROP'
     HORIZONTAL_FLIP = 'HORIZONTAL-FLIP'
     VERTICAL_FLIP = 'VERTICAL-FLIP'
     MIXUP = 'MIXUP'
@@ -115,6 +115,27 @@ class MNISTBenchmark:
                                                    # pin_memory=True,
                                              shuffle=False, num_workers=2)
 
+    # TODO: Only for test purpose. I should remove it afterwards. I should use the whole training set for precalibration.
+
+    subset_size = int(0.01 * len(trainset))  # 600
+    indices = torch.randperm(len(trainset))[:subset_size]
+
+    trainset = torch.utils.data.Subset(trainset, indices)
+
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
+                                               # pin_memory=True,
+                                               shuffle=True, num_workers=2)
+ 
+    subset_size2 = int(0.01 * len(testset))  # 600
+    indices = torch.randperm(len(testset))[:subset_size2]
+
+    testset = torch.utils.data.Subset(testset, indices)
+
+    testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE,
+                                               # pin_memory=True,
+                                               shuffle=False, num_workers=2)
+
+
 
     # Train Model
     model = MNistNet().to(DEVICE)
@@ -146,7 +167,7 @@ class MNISTBenchmark:
 
                 # # print statistics
                 if i % 100 == 0:
-                    print(f'[{epoch}, batch:{i}] loss: {loss.item():.3f}')# and accuracy: {accur}')
+                    print(f'[{epoch}, batch:{i}] loss: {loss.item():.3f}')# and accuracy: {accur}', flush=True)
             scheduler.step()
         torch.save(model.state_dict(), self.path_saved_model)
     else:
@@ -299,7 +320,7 @@ class MNISTBenchmark:
             self.accuracies[dataset].append(overall)
             print("Overall accuracy:", overall, "% (", total_cases, "cases)")
 
-        print("\n")
+        print("\n", flush=True)
 
 
   def apply_aug(self, data, augmentation_name):

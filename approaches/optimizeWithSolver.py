@@ -5,11 +5,12 @@ from pyscipopt import Model, quicksum
 
 class OptimizeWithSolver:
 
-    def __init__(self, time_limit=60, mip_gap=1e-3, verbose=False, eps=1e-6):
+    def __init__(self, time_limit=60, mip_gap=1e-3, n_threads=6, verbose=False, eps=1e-6):
         self.time_limit = time_limit
         self.mip_gap = mip_gap
         self.verbose = verbose
         self.eps = eps
+        self.n_threads = n_threads 
 
     def optimize_w_for_all_patterns_simultaneously(self, p_orig, p_aug, y, index_by_pattern, alpha, ):
         one_minus_p_orig = np.asarray(1.0 - p_orig, dtype=float)
@@ -41,7 +42,8 @@ class OptimizeWithSolver:
         model.setParam("display/verblevel", 4 if self.verbose else 0)
         # model.setParam("limits/time", float(self.time_limit))
         model.setParam("limits/gap", float(self.mip_gap))
-
+        model.setParam("parallel/maxnthreads", self.n_threads)
+       
         ub_u = 1.0
         M_eff = 1.0 + float(self.eps)  # sufficient since scores and tau are in [0, 1]
 
@@ -61,11 +63,15 @@ class OptimizeWithSolver:
             c = int(index_by_pattern[i])
 
             for k in range(K):
-                score_expr = (
-                        float(one_minus_p_orig[i, k]) * u[c]
-                        + float(one_minus_p_aug[i, k]) * (1.0 - u[c])
-                )
+               # score_expr = (
+               #         float(one_minus_p_orig[i, k]) * u[c]
+               #         + float(one_minus_p_aug[i, k]) * (1.0 - u[c])
+               # )
 
+                score_expr = (
+                        float(one_minus_p_orig[i, k])
+                        + (float(one_minus_p_orig[i, k]) + float(one_minus_p_aug[i, k])) * u[c]
+                )
                 # z[i,k] = 1  <=>  score_expr <= tau
                 model.addCons(
                     score_expr <= tau + M_eff * (1 - z[i, k]),
@@ -86,8 +92,10 @@ class OptimizeWithSolver:
             quicksum(z[i, k] for i in range(n) for k in range(K)),
             sense="minimize",
         )
-
+        model.writeProblem(filename="optimization_problem.lp", trans=False, genericnames=False)
+        print("Contruction of MILP completed. see: optimization_problem.lp", flush=True)
         model.optimize()
+        print("Optimization completed...", flush=True)
 
         status_name = str(model.getStatus()).upper()
         best_sol = model.getBestSol()

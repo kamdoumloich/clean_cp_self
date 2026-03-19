@@ -17,6 +17,12 @@ parser.add_argument("--robust", type=bool, choices=['True', 'False'], default=Fa
 parser.add_argument("--alpha", type=float, required=True)
 parser.add_argument("--min_samples_per_pattern", type=int, default=15)
 
+# TODO: Minimal settings for my experiments
+parser.add_argument("--train_fraction", type=float, default=0.1)
+parser.add_argument("--test_fraction", type=float, default=0.1)
+parser.add_argument("--calibration_fraction", type=float, default=0.2)
+parser.add_argument("--precalibration_fraction", type=float, default=0.01)
+
 args = parser.parse_args()
 
 seed_nber = args.seed
@@ -24,26 +30,44 @@ dataset = args.dataset
 alpha = args.alpha
 min_samples_per_pattern = args.min_samples_per_pattern
 is_robust = args.robust
+train_fraction = args.train_fraction
+test_fraction = args.test_fraction
+calibration_fraction = args.calibration_fraction
+precalibration_fraction = args.precalibration_fraction
 
 dict_augmentations = {
     "ORIGINAL": 0,
-    "ROTATION": 10,
+    # "ROTATION": 10,
+    "HUE": 0.1,
 }
+
+print("\n\n")
+print("*"*60)
+print("RUNNING THE SIMULATION WITH THE FOLLOWING PARAMETERS:")
+print("*"*60)
+print(' '.join(f' - {k}={v}\n' for k, v in vars(args).items()))
+print("*"*60)
 
 latex_file_name = f"ClassWeightedRankBasedRobust{is_robust}.tex"
 
 
 if dataset == 'cifar':
-    raise NotImplementedError("Robust training for CIFAR10 is not implemented yet.")
 
     latex_file_name = f"ClassWeightedRankBased{seed_nber}Robust{is_robust}.tex"
 
     path_logs = "./logs/cifar/"+str(seed_nber)+"/"
 
-    selected_benchmark = benchmarks.cifar.CIFARBenchmark(augmentations=dict_augmentations, seed=seed_nber,
-                                                         robust_training=is_robust, path_logs=path_logs)
+    selected_benchmark = benchmarks.cifar.CIFAR10Benchmark(augmentations=dict_augmentations, seed=seed_nber,
+                                                         robust_training=is_robust, path_logs=path_logs,
+                                                         train_fraction = train_fraction,
+                                                         test_fraction = test_fraction,
+                                                         calibration_fraction = calibration_fraction,
+                                                         precalibration_fraction = precalibration_fraction,
+                                                        )
     n_classes = 10
 elif dataset == 'mnist':
+
+    raise NotImplementedError("Robust training for CIFAR10 is not implemented yet.")
 
     path_logs = "./logs/mnist/"+str(seed_nber)+"/"
 

@@ -35,8 +35,7 @@ class WeightedRank2DPredictor:
         #       [0 9 3 6 8 4 1 2 7 5 0 9 3 6 8 4 1 2 7 5] -> The highest probDist for Orig correspond to the 1st class (1-based index)
         self.extracted_patterns = self.create_patterns(self.allProbDist[0], self.allProbDist[1])
 
-        print("Initalization done.")
-
+        print("Initalization of WeightedRank2DPredictor done.", flush=True)
 
 
     def create_patterns(self, probDist_orig, probDist_aug):
@@ -94,9 +93,11 @@ class WeightedRank2DPredictor:
             pat_to_global[pat_id] = current_pattern_id
             c_idx_global[inv == pat_id] = current_pattern_id
             current_pattern_id += 1
+        print(f"Number of patterns with at least {self.min_samples_per_pattern} samples: {len(kept_pat_ids)}/{self.extracted_patterns.shape[0]}", flush=True)
+
 
         if os.path.exists(save_path):
-            print("Loading weights...")
+            print("Loading weights...", flush=True)
             data = np.load(save_path, allow_pickle=True)
 
             best_result = {
@@ -114,7 +115,9 @@ class WeightedRank2DPredictor:
 
         else:
 
+            print("Solver instance is created", flush=True)
             optimization_tool = OptimizeWithSolver()
+            print("Call solving function...", flush=True)
             best_result = optimization_tool.optimize_w_for_all_patterns_simultaneously(
                 p_orig=self.allProbDist[0],
                 p_aug=self.allProbDist[1],
@@ -123,8 +126,10 @@ class WeightedRank2DPredictor:
                 alpha=self.alpha,
             )
 
+            print("Solver ended solving", flush=True)
+
         if best_result is None or best_result.get("tau") is None:
-            self.u_global = 1.0
+            self.u_global = 0.0
             self.tau_from_optimization = None
             if self.verbose:
                 print("[precalibrate] optimization returned no incumbent solution.")
@@ -271,12 +276,12 @@ class WeightedRank2DPredictor:
         pat = self.create_pattern_1d(probDistOrig, probDistAug)
         pat_key = tuple(pat.tolist())
 
-        w_eff = self.dict_pattern_and_w.get(pat_key, 1.0)
+        w_eff = self.dict_pattern_and_w.get(pat_key)
 
-        if w_eff == 0:
+        if w_eff is None:
             return probDistOrig
 
-        weighted_prob = w_eff * probDistOrig + (1 - w_eff) * probDistAug
+        weighted_prob = (1 - w_eff) * probDistOrig + w_eff * probDistAug
 
         return weighted_prob
 
