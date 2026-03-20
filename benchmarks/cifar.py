@@ -1,5 +1,6 @@
 import os
 import random
+# from collections.abc import generator
 from enum import Enum
 
 import numpy as np
@@ -9,7 +10,7 @@ import torchvision
 from numpy.f2py.auxfuncs import throw_error
 
 from utils import function_utils
-from utils.function_utils import Augmentation, FunctionsUtils
+from utils.function_utils import Augmentation, UtilsAugmentations
 
 """
 CIFAR10 Benchmark for the Conformance Prediction Framework
@@ -115,13 +116,13 @@ class CIFAR10Benchmark:
         else:
             self.path_saved_model = (
                 f'{self.path_logs}cnn_cifar10_{DEVICE}_ITERATION{ITERATIONS}_'
-                f'{dataset_specification}_{model_specification}.pt'
+                f'{dataset_specification}.pt'
             )
 
         transform = torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
-            torchvision.transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2470, 0.2435, 0.2616))
         ])
+
 
         trainset_full = torchvision.datasets.CIFAR10(
             root=self.basepath + '/data',
@@ -155,17 +156,21 @@ class CIFAR10Benchmark:
             generator_offset=1,
         )
 
+        this_generator = torch.Generator().manual_seed(self.seed)
+
         trainloader = torch.utils.data.DataLoader(
             trainset,
             batch_size=BATCH_SIZE,
             shuffle=True,
             num_workers=2,
+            generator=this_generator,
         )
         testloader = torch.utils.data.DataLoader(
             testing_set,
             batch_size=BATCH_SIZE,
             shuffle=False,
             num_workers=2,
+            generator=this_generator,
         )
 
         print("Size of sets:")
@@ -346,17 +351,17 @@ class CIFAR10Benchmark:
         if augmentation_name == Augmentation.ORIGINAL.value:
             return data
         if augmentation_name == Augmentation.HORIZONTAL_FLIP.value:
-            return FunctionsUtils.apply_horizontal_flip(data)
+            return UtilsAugmentations.apply_horizontal_flip(data)
         if augmentation_name == Augmentation.BLUR.value:
-            return FunctionsUtils.apply_gaussian_blur(data, self.augmentations[augmentation_name])
+            return UtilsAugmentations.apply_gaussian_blur(data, self.augmentations[augmentation_name])
         if augmentation_name == Augmentation.CONTRAST.value:
-            return FunctionsUtils.apply_contrast(data, contrast_factor=self.augmentations[augmentation_name])
+            return UtilsAugmentations.apply_contrast(data, contrast_factor=self.augmentations[augmentation_name])
         if augmentation_name == Augmentation.BRIGHTNESS.value:
-            return FunctionsUtils.apply_brightness(data, brightness_factor=self.augmentations[augmentation_name])
+            return UtilsAugmentations.apply_brightness(data, brightness_factor=self.augmentations[augmentation_name])
         if augmentation_name == Augmentation.HUE.value:
-            return FunctionsUtils.apply_hue(data, hue_factor=self.augmentations[augmentation_name])
+            return UtilsAugmentations.apply_hue(data, hue_factor=self.augmentations[augmentation_name])
         if augmentation_name == Augmentation.ROTATION.value:
-            return FunctionsUtils.apply_rotation(data, angle_deg=self.augmentations[augmentation_name])
+            return UtilsAugmentations.apply_rotation(data, angle_deg=self.augmentations[augmentation_name])
 
     def _texClassAccuracies(self, dataset: str) -> str:
         data = self.class_accuracies.get(dataset, {})

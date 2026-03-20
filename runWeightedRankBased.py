@@ -37,8 +37,10 @@ precalibration_fraction = args.precalibration_fraction
 
 dict_augmentations = {
     "ORIGINAL": 0,
-    # "ROTATION": 10,
-    "HUE": 0.1,
+    # "ROTATION": 3,
+    # "HUE": 0.01,
+    "CONTRAST": 1.2,
+    # "HORIZONTAL_FLIP": True,
 }
 
 TRAIN_ITERATION = 4
@@ -70,7 +72,7 @@ if dataset == 'cifar':
     n_classes = 10
 elif dataset == 'mnist':
 
-    raise NotImplementedError("Robust training for CIFAR10 is not implemented yet.")
+    raise NotImplementedError("Not implemented yet.")
 
     path_logs = "./logs/mnist/"+str(seed_nber)+"/"
 
@@ -81,14 +83,13 @@ elif dataset == 'mnist':
 else:
     raise NotImplementedError
 
-# assert False
 baseApproach = approaches.base.MonotoneConformanceEvaluatorSingleDistributionAllAboveThresholdButAtLeastOneClass()
 weightedApproach = approaches.weightedRankBased.WeightedRank2DPredictor(precalibration_data=selected_benchmark.precalibration_data,
                                                                         alpha=alpha, seed=seed_nber,
                                                                         n_classes=n_classes, min_samples_per_pattern=min_samples_per_pattern,
                                                                         path_logs = path_logs,
                                                                         )
-
+# assert False
 interestingCaseFilter = interestingcasefilters.largedeviation.LargeDeviationInterestingCaseFilter(1.0 - alpha)
 compact.runCompleteEvaluation(texTargetFile=str(path_logs)+""+str(latex_file_name), benchmark=selected_benchmark,
                               conformanceApproaches=[baseApproach,weightedApproach,],

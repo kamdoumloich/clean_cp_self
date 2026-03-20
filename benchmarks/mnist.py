@@ -101,18 +101,17 @@ class MNISTBenchmark:
     transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),])
 
     # Read Dataset: Training & Testing
+    this_generator = torch.Generator().manual_seed(self.seed)
     trainset = torchvision.datasets.MNIST(root=self.basepath+'/data', train=True,
                                             download=True,transform=transform)
 
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
-                                                   # pin_memory=True,
-                                              shuffle=False, num_workers=2)
+                                              shuffle=True, num_workers=2, generator=this_generator)
 
     testset = torchvision.datasets.MNIST(root=self.basepath+'/data', train=False,
                                            download=True,transform=transform)
 
     testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE,
-                                                   # pin_memory=True,
                                              shuffle=False, num_workers=2)
 
     # TODO: Only for test purpose. I should remove it afterwards. I should use the whole training set for precalibration.
@@ -123,8 +122,7 @@ class MNISTBenchmark:
     trainset = torch.utils.data.Subset(trainset, indices)
 
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
-                                               # pin_memory=True,
-                                               shuffle=True, num_workers=2)
+                                               shuffle=True, num_workers=2, generator=this_generator)
  
     subset_size2 = int(0.01 * len(testset))  # 600
     indices = torch.randperm(len(testset))[:subset_size2]
@@ -132,7 +130,6 @@ class MNISTBenchmark:
     testset = torch.utils.data.Subset(testset, indices)
 
     testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE,
-                                               # pin_memory=True,
                                                shuffle=False, num_workers=2)
 
 
@@ -186,18 +183,6 @@ class MNISTBenchmark:
     self.calibration_data = []
     self.testing_data = []
     self.precalibration_data = []
-
-    # TODO: Only for test purpose. I should remove it afterwards. I should use the whole training set for precalibration.
-
-    # subset_size = int(0.0001 * len(trainset))  # 600
-    # indices = torch.randperm(len(trainset))[:subset_size]
-
-    # trainset_small = torch.utils.data.Subset(trainset, indices)
-
-    # trainloader_small = torch.utils.data.DataLoader(trainset_small, batch_size=BATCH_SIZE,
-    #                                           # pin_memory=True,
-    #                                           shuffle=True, num_workers=2)
-
 
     softmax = torch.nn.Softmax(dim=1)
     model.eval()

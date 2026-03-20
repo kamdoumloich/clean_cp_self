@@ -62,6 +62,8 @@ class WeightedRank2DPredictor:
 
         # return np.hstack(tup=(ranks_per_classes_orig, ranks_per_classes_aug), dtype=int)
 
+    # def compute_candidate_calibration_value_for_orig(self, p_orig, ):
+
     def precalibrate(self):
         patterns = self.extracted_patterns
         unique_pats, inv, counts = np.unique(
