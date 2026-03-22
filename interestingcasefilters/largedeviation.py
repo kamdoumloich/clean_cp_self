@@ -48,6 +48,8 @@ class LargeDeviationInterestingCaseFilter:
             allLines.append("\\item Calibration Value: "+str(b[1])+" with probability "+str(b[0]))
             nofItems = len(b[2])
             predictorKeys.append(a)
+        if len(self.casesByPredictor)==0:
+            allLines.append("\\item (none)")
         allLines.append("\\end{enumerate}")
         for predA in range(0,len(predictorKeys)):
             for predB in range(predA+1,len(predictorKeys)):
