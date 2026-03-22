@@ -1,6 +1,7 @@
 from logging import raiseExceptions
 
 import numpy as np
+import sys
 
 
 class WeightedRank2DPredictor:
@@ -76,6 +77,17 @@ class WeightedRank2DPredictor:
             np_probDist_aug_current_pattern = self.allProbDist[1][current_indices]
             np_true_classes = self.allTargets[current_indices]
 
+            # ===================================================================================
+            # Pattern extractor for external encoding of the optimization problem for experiments
+            # ===================================================================================
+            # print("##PATTERN DATA",i,len(np_true_classes))
+            # for i in range(len(np_true_classes)):
+            #     for j in range(len(np_probDist_orig_current_pattern[i])):
+            #         sys.stdout.write(str(np_probDist_orig_current_pattern[i][j])+" ")
+            #     for j in range(len(np_probDist_orig_current_pattern[i])):
+            #         sys.stdout.write(str(np_probDist_aug_current_pattern[i][j])+" ")
+            #     print(np_true_classes[i])
+            
             current_w = self.compute_weight_for_pattern(probDist_orig=np_probDist_orig_current_pattern,
                                                         probDist_aug=np_probDist_aug_current_pattern,
                                                         true_classes=np_true_classes)
