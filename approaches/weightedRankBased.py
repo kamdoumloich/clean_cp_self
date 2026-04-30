@@ -1,5 +1,5 @@
 import os
-from logging import raiseExceptions
+import subprocess
 
 import numpy as np
 
@@ -9,7 +9,13 @@ from approaches.optimizeWithSolver import OptimizeWithSolver
 class WeightedRank2DPredictor:
 
     def __init__(self, precalibration_data, alpha, path_logs, n_classes:int = 10, seed: int = 2026,
-                 min_samples_per_pattern: int = 1, verbose: bool = True):
+                 min_samples_per_pattern: int = 1, verbose: bool = True,
+                 precalibration_backend: str = "precalibrator"):
+        if precalibration_backend not in {"precalibrator", "solver"}:
+            raise ValueError(
+                "precalibration_backend must be 'precalibrator' or 'solver'."
+            )
+
         self.n_classes = n_classes
         self.seed = seed
         self.dict_pattern_and_w = {}
@@ -17,6 +23,12 @@ class WeightedRank2DPredictor:
         self.alpha = alpha
         self.verbose = verbose
         self.path_logs = path_logs
+        self.precalibration_backend = precalibration_backend
+        self.project_root = os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
+        )
+        self.u_global = 0.0
+        self.tau_from_optimization = None
 
 
         tmp_probDistributions, tmp_targets = zip(*precalibration_data)
@@ -64,6 +76,227 @@ class WeightedRank2DPredictor:
 
     # def compute_candidate_calibration_value_for_orig(self, p_orig, ):
 
+    def _get_precalibration_cache_path(self):
+        return os.path.join(
+            self.path_logs,
+            f"precalibration_result_{self.seed}_alpha{self.alpha}_{self.precalibration_backend}.npz",
+        )
+
+    def _get_precalibrator_paths(self):
+        base_name = f"precalibrator_{self.seed}_alpha{self.alpha}"
+        return {
+            "step1_input": os.path.join(self.path_logs, f"{base_name}_step1_input.txt"),
+            "step1_output": os.path.join(self.path_logs, f"{base_name}_step1_output.txt"),
+            "step2_output": os.path.join(self.path_logs, f"{base_name}_step2_output.txt"),
+            "step3_output": os.path.join(self.path_logs, f"{base_name}_step3_output.txt"),
+        }
+
+    def _write_precalibrator_step1_input(self, inv, kept_pat_ids, target_path):
+        with open(target_path, "w", encoding="utf-8") as file:
+            for exported_pattern_id, pat_id in enumerate(kept_pat_ids):
+                sample_indices = np.flatnonzero(inv == pat_id)
+                file.write(
+                    f"##PATTERN DATA {exported_pattern_id} {len(sample_indices)}\n"
+                )
+
+                for sample_idx in sample_indices:
+                    orig_values = 1.0 - np.asarray(self.allProbDist[0][sample_idx], dtype=np.float64)
+                    aug_values = 1.0 - np.asarray(self.allProbDist[1][sample_idx], dtype=np.float64)
+                    target_class = int(self.allTargets[sample_idx])
+
+                    line_values = [
+                        *orig_values.tolist(),
+                        *aug_values.tolist(),
+                        target_class,
+                    ]
+                    file.write(" ".join(str(value) for value in line_values))
+                    file.write("\n")
+
+    def _run_precalibrator_pipeline(self, step1_input_path):
+        paths = self._get_precalibrator_paths()
+        paths["step1_input"] = step1_input_path
+
+        subprocess.run(
+            [
+                "python3",
+                os.path.join("precalibrator", "precalibrator_step1.py"),
+                paths["step1_input"],
+                paths["step1_output"],
+            ],
+            cwd=self.project_root,
+            check=True,
+        )
+        subprocess.run(
+            [
+                "python3",
+                os.path.join("precalibrator", "precalibrator_step2.py"),
+                paths["step1_output"],
+                str(1.0 - self.alpha),
+                paths["step2_output"],
+            ],
+            cwd=self.project_root,
+            check=True,
+        )
+        subprocess.run(
+            [
+                "python3",
+                os.path.join("precalibrator", "precalibrator_step3.py"),
+                paths["step1_input"],
+                paths["step2_output"],
+                paths["step3_output"],
+            ],
+            cwd=self.project_root,
+            check=True,
+        )
+        return paths
+
+    def _load_precalibrator_step3_output(self, step3_output_path):
+        with open(step3_output_path, "r", encoding="utf-8") as file:
+            first_line = file.readline().strip().split()
+            if len(first_line) != 2 or first_line[0] != "calibration_value":
+                raise ValueError(
+                    f"Unexpected header in precalibrator output: {first_line}"
+                )
+
+            calibration_value = float(first_line[1])
+            pattern_weights = []
+            for line in file:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                parts = stripped.split()
+                if len(parts) != 4:
+                    raise ValueError(
+                        f"Unexpected line in precalibrator output: {stripped}"
+                    )
+                pattern_weights.append(float(parts[1]))
+
+        return calibration_value, pattern_weights
+
+    def _save_pattern_weight_cache(self, save_path):
+        pattern_keys = np.asarray(
+            list(self.dict_pattern_and_w.keys()),
+            dtype=np.int64,
+        )
+        pattern_weights = np.asarray(
+            list(self.dict_pattern_and_w.values()),
+            dtype=np.float64,
+        )
+        pattern_counts = np.asarray(
+            [self.pattern_counts[key] for key in self.dict_pattern_and_w.keys()],
+            dtype=np.int64,
+        )
+        tau_value = (
+            np.nan if self.tau_from_optimization is None else float(self.tau_from_optimization)
+        )
+
+        np.savez(
+            save_path,
+            backend=self.precalibration_backend,
+            tau=tau_value,
+            u_global=float(self.u_global),
+            pattern_keys=pattern_keys,
+            pattern_weights=pattern_weights,
+            pattern_counts=pattern_counts,
+        )
+
+    def _load_pattern_weight_cache(self, save_path):
+        data = np.load(save_path, allow_pickle=True)
+        if "pattern_keys" not in data.files:
+            return None
+
+        self.dict_pattern_and_w = {}
+        self.dict_pattern_to_w_vectors = {}
+        self.pattern_counts = {}
+
+        tau_value = float(data["tau"])
+        self.tau_from_optimization = None if np.isnan(tau_value) else tau_value
+        self.u_global = float(data["u_global"])
+
+        pattern_keys = data["pattern_keys"]
+        pattern_weights = data["pattern_weights"]
+        pattern_counts = data["pattern_counts"]
+
+        for idx in range(len(pattern_weights)):
+            pat_key = tuple(np.asarray(pattern_keys[idx], dtype=np.int64).tolist())
+            weight = float(pattern_weights[idx])
+            count = int(pattern_counts[idx])
+            self.dict_pattern_and_w[pat_key] = weight
+            self.dict_pattern_to_w_vectors[pat_key] = weight
+            self.pattern_counts[pat_key] = count
+
+        return {
+            "status": "LOADED_PATTERN_WEIGHT_CACHE",
+            "tau": self.tau_from_optimization,
+        }
+
+    def _store_solver_results(self, unique_pats, kept_pat_ids, counts, pat_to_global, best_result):
+        self.tau_from_optimization = float(best_result["tau"])
+        u_sol = np.asarray(best_result["u"], dtype=np.float64)
+
+        # Group 0 is the fallback group for all patterns below support threshold
+        self.u_global = float(u_sol[0])
+
+        for pat_id in kept_pat_ids:
+            pat_key = tuple(unique_pats[pat_id].tolist())
+            global_id = pat_to_global[pat_id]
+            w_value = float(u_sol[global_id])
+
+            self.dict_pattern_and_w[pat_key] = w_value
+            self.dict_pattern_to_w_vectors[pat_key] = w_value
+            self.pattern_counts[pat_key] = int(counts[pat_id])
+
+    def _store_precalibrator_results(self, unique_pats, kept_pat_ids, counts, calibration_value, pattern_weights):
+        if len(pattern_weights) != len(kept_pat_ids):
+            raise ValueError(
+                "Precalibrator output does not match the number of exported patterns."
+            )
+
+        self.tau_from_optimization = float(calibration_value)
+        self.u_global = 0.0
+
+        for exported_pattern_id, pat_id in enumerate(kept_pat_ids):
+            pat_key = tuple(unique_pats[pat_id].tolist())
+            w_value = float(pattern_weights[exported_pattern_id])
+            self.dict_pattern_and_w[pat_key] = w_value
+            self.dict_pattern_to_w_vectors[pat_key] = w_value
+            self.pattern_counts[pat_key] = int(counts[pat_id])
+
+    def _write_precalibration_log(self, unique_pats, details):
+        if not self.verbose:
+            return
+
+        log_path = os.path.join(
+            self.path_logs,
+            f"precalibration_log_{self.seed}_alpha{self.alpha}.txt",
+        )
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("*" * 10 + "\n")
+            f.write(f"[precalibrate] backend = {self.precalibration_backend}\n")
+            f.write(f"[precalibrate] fallback u_global = {self.u_global}\n")
+
+            for key, value in self.dict_pattern_and_w.items():
+                f.write(f"{key} -> {value}\n")
+
+            f.write("*" * 10 + "\n")
+
+            n_kept = len(self.dict_pattern_and_w)
+            n_total = len(unique_pats)
+            f.write(
+                f"[precalibrate] stored {n_kept}/{n_total} patterns "
+                f"(support >= {self.min_samples_per_pattern}).\n"
+            )
+            f.write(
+                f"[precalibrate] tau_from_optimization = {self.tau_from_optimization}\n"
+            )
+
+            if details is not None:
+                f.write("*" * 20 + "\n")
+                f.write("[PRECALIBRATION DETAILS]\n")
+                for key, value in details.items():
+                    f.write(f"{key}: {value}\n")
+            f.write("*" * 20 + "\n")
+
     def precalibrate(self):
         patterns = self.extracted_patterns
         unique_pats, inv, counts = np.unique(
@@ -73,7 +306,8 @@ class WeightedRank2DPredictor:
             return_counts=True,
         )
 
-        save_path = f"{self.path_logs}precalibration_result_{self.seed}_alpha{self.alpha}.npz"
+        os.makedirs(self.path_logs, exist_ok=True)
+        save_path = self._get_precalibration_cache_path()
         kept_pat_ids = [
             pat_id
             for pat_id, n_z in enumerate(counts.tolist())
@@ -95,28 +329,50 @@ class WeightedRank2DPredictor:
             pat_to_global[pat_id] = current_pattern_id
             c_idx_global[inv == pat_id] = current_pattern_id
             current_pattern_id += 1
-        print(f"Number of patterns with at least {self.min_samples_per_pattern} samples: {len(kept_pat_ids)}/{self.extracted_patterns.shape[0]}", flush=True)
+        print(
+            f"Number of patterns with at least {self.min_samples_per_pattern} samples: "
+            f"{len(kept_pat_ids)}/{len(unique_pats)}",
+            flush=True,
+        )
 
+        self.precalibrator_step1_input_path = self._get_precalibrator_paths()["step1_input"]
+        self._write_precalibrator_step1_input(
+            inv=inv,
+            kept_pat_ids=kept_pat_ids,
+            target_path=self.precalibrator_step1_input_path,
+        )
 
-        if os.path.exists(save_path):
+        # if os.path.exists(save_path):
+        if False:
             print("Loading weights...", flush=True)
-            data = np.load(save_path, allow_pickle=True)
+            cached_result = self._load_pattern_weight_cache(save_path)
+            if cached_result is not None:
+                self._write_precalibration_log(unique_pats, cached_result)
+                print("Precalibration done", flush=True)
+                return
 
-            best_result = {
-                "status": data["status"].item(),
-                "objective": float(data["objective"]),
-                "u": data["u"],
-                "z": data["z"],
-                "coverage_proxy": float(data["coverage_proxy"]),
-                "avg_set_size_proxy": float(data["avg_set_size_proxy"]),
-                "tau": float(data["tau"]) if data["tau"] is not None else None,
-                "M": float(data["M"]),
-                "runtime": float(data["runtime"]),
-                "mip_gap": float(data["mip_gap"]) if data["mip_gap"] is not None else None,
+        if self.precalibration_backend == "precalibrator":
+            precalibrator_paths = self._run_precalibrator_pipeline(
+                self.precalibrator_step1_input_path
+            )
+            calibration_value, pattern_weights = self._load_precalibrator_step3_output(
+                precalibrator_paths["step3_output"]
+            )
+            self._store_precalibrator_results(
+                unique_pats=unique_pats,
+                kept_pat_ids=kept_pat_ids,
+                counts=counts,
+                calibration_value=calibration_value,
+                pattern_weights=pattern_weights,
+            )
+            details = {
+                "status": "PRECALIBRATOR_PIPELINE",
+                "step1_input": precalibrator_paths["step1_input"],
+                "step1_output": precalibrator_paths["step1_output"],
+                "step2_output": precalibrator_paths["step2_output"],
+                "step3_output": precalibrator_paths["step3_output"],
             }
-
         else:
-
             print("Solver instance is created", flush=True)
             optimization_tool = OptimizeWithSolver()
             print("Call solving function...", flush=True)
@@ -129,111 +385,25 @@ class WeightedRank2DPredictor:
             )
 
             print("Solver ended solving", flush=True)
+            if best_result is None or best_result.get("tau") is None:
+                self.u_global = 0.0
+                self.tau_from_optimization = None
+                if self.verbose:
+                    print("[precalibrate] optimization returned no incumbent solution.")
+                print("Precalibration done")
+                return
 
-        if best_result is None or best_result.get("tau") is None:
-            self.u_global = 0.0
-            self.tau_from_optimization = None
-            if self.verbose:
-                print("[precalibrate] optimization returned no incumbent solution.")
-            print("Precalibration done")
-            return
-
-        self.tau_from_optimization = float(best_result["tau"])
-        u_sol = np.asarray(best_result["u"], dtype=np.float64)
-
-        # Group 0 is the fallback group for all patterns below support threshold
-        self.u_global = float(u_sol[0])
-
-        for pat_id in kept_pat_ids:
-            pat_key = tuple(unique_pats[pat_id].tolist())
-            global_id = pat_to_global[pat_id]
-            w_value = float(u_sol[global_id])
-
-            self.dict_pattern_and_w[pat_key] = w_value
-            self.dict_pattern_to_w_vectors[pat_key] = w_value
-            self.pattern_counts[pat_key] = int(counts[pat_id])
-
-        # if self.verbose:
-        #     print("*" * 10)
-        #     print(f"[precalibrate] fallback u_global = {self.u_global}")
-        #     for key, value in self.dict_pattern_and_w.items():
-        #         print(f"{key} -> {value}")
-        #     print("*" * 10)
-        #     n_kept = len(self.dict_pattern_and_w)
-        #     n_total = len(unique_pats)
-        #     print(
-        #         f"[precalibrate] stored {n_kept}/{n_total} patterns "
-        #         f"(support >= {self.min_samples_per_pattern})."
-        #     )
-        #     print(f"[precalibrate] tau_from_optimization = {self.tau_from_optimization}")
-        #
-        #     print("*"*20)
-        #     print(best_result)
-        #     print("*"*20)
-
-        if self.verbose:
-            with open(f"{self.path_logs}precalibration_log_{self.seed}_alpha{self.alpha}.txt", "w") as f:
-                f.write("*" * 10 + "\n")
-                f.write(f"[precalibrate] fallback u_global = {self.u_global}\n")
-
-                for key, value in self.dict_pattern_and_w.items():
-                    f.write(f"{key} -> {value}\n")
-
-                f.write("*" * 10 + "\n")
-
-                n_kept = len(self.dict_pattern_and_w)
-                n_total = len(unique_pats)
-
-                f.write(
-                    f"[precalibrate] stored {n_kept}/{n_total} patterns "
-                    f"(support >= {self.min_samples_per_pattern}).\n"
-                )
-
-                f.write(
-                    f"[precalibrate] tau_from_optimization = {self.tau_from_optimization}\n"
-                )
-
-                f.write("*" * 20 + "\n")
-                f.write("[OPTIMIZER RESULTS]\n")
-
-                if best_result is None:
-                    f.write("None\n")
-                else:
-                    for key, value in best_result.items():
-                        f.write(f"{key}:\n")
-
-                        if isinstance(value, np.ndarray):
-                            f.write(
-                                np.array2string(
-                                    value,
-                                    threshold=np.inf,
-                                    max_line_width=np.inf,
-                                    separator=", "
-                                )
-                                + "\n"
-                            )
-                        else:
-                            f.write(f"{value}\n")
-
-                        f.write("\n")
-
-                f.write("*" * 20 + "\n")
-
-
-
-            np.savez(
-                save_path,
-                status=best_result["status"],
-                objective=best_result["objective"],
-                u=best_result["u"],
-                z=best_result["z"],
-                coverage_proxy=best_result["coverage_proxy"],
-                avg_set_size_proxy=best_result["avg_set_size_proxy"],
-                tau=best_result["tau"],
-                M=best_result["M"],
-                runtime=best_result["runtime"],
-                mip_gap=best_result["mip_gap"],
+            self._store_solver_results(
+                unique_pats=unique_pats,
+                kept_pat_ids=kept_pat_ids,
+                counts=counts,
+                pat_to_global=pat_to_global,
+                best_result=best_result,
             )
+            details = best_result
+
+        self._write_precalibration_log(unique_pats, details)
+        self._save_pattern_weight_cache(save_path)
 
         print("Precalibration done")
 
@@ -278,10 +448,7 @@ class WeightedRank2DPredictor:
         pat = self.create_pattern_1d(probDistOrig, probDistAug)
         pat_key = tuple(pat.tolist())
 
-        w_eff = self.dict_pattern_and_w.get(pat_key)
-
-        if w_eff is None:
-            return probDistOrig
+        w_eff = float(self.dict_pattern_and_w.get(pat_key, self.u_global))
 
         weighted_prob = (1 - w_eff) * probDistOrig + w_eff * probDistAug
 

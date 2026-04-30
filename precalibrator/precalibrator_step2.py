@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import sys, math, copy
 
 def performCalibrationStep2(inputFile,percentage,outputFile):
@@ -110,7 +111,7 @@ def performCalibrationStep2(inputFile,percentage,outputFile):
                     currentSizesConformanceSets[0] = math.inf
                 else:
                     # print("Best: ",bestRatio,bestNofAddCoverage,bestNofAddConformanceSets,bestPattern,currentSelection[bestPattern])
-                    currentSizesConformanceSets[patternNo] += bestNofAddConformanceSets
+                    currentSizesConformanceSets[bestPattern] += bestNofAddConformanceSets
                     currentSelection[bestPattern] += bestNofAddCoverage
                     currentSize += bestNofAddCoverage
             print("Final result with",currentSize," coverage and ",sum(currentSizesConformanceSets)," big conformance sets overall.")
@@ -132,5 +133,18 @@ def performCalibrationStep2(inputFile,percentage,outputFile):
 
 
 
-# performCalibrationStep2("testing-achievable-tradeoffs-per-class.txt",0.80)
-performCalibrationStep2("out-short-per-class.txt",0.9,"out-short-per-class-input-to-step-3.txt")
+def _parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input_file", nargs="?", default="out-short-per-class.txt")
+    parser.add_argument("percentage", nargs="?", type=float, default=0.9)
+    parser.add_argument(
+        "output_file",
+        nargs="?",
+        default="out-short-per-class-input-to-step-3.txt",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = _parse_args()
+    performCalibrationStep2(args.input_file, args.percentage, args.output_file)

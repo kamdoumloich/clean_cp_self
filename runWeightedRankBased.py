@@ -16,6 +16,9 @@ parser.add_argument("--dataset", type=str, required=True, choices=['mnist', 'cif
 parser.add_argument("--robust", type=bool, choices=['True', 'False'], default=False)
 parser.add_argument("--alpha", type=float, required=True)
 parser.add_argument("--min_samples_per_pattern", type=int, default=10)
+parser.add_argument("--precalibration_backend", type=str, default="precalibrator",
+                    choices=["precalibrator", "solver"],
+)
 
 # TODO: Minimal settings for my experiments
 parser.add_argument("--train_fraction", type=float, default=0.1)
@@ -29,6 +32,7 @@ seed_nber = args.seed
 dataset = args.dataset
 alpha = args.alpha
 min_samples_per_pattern = args.min_samples_per_pattern
+precalibration_backend = args.precalibration_backend
 is_robust = args.robust
 train_fraction = args.train_fraction
 test_fraction = args.test_fraction
@@ -88,6 +92,7 @@ weightedApproach = approaches.weightedRankBased.WeightedRank2DPredictor(precalib
                                                                         alpha=alpha, seed=seed_nber,
                                                                         n_classes=n_classes, min_samples_per_pattern=min_samples_per_pattern,
                                                                         path_logs = path_logs,
+                                                                        precalibration_backend=precalibration_backend,
                                                                         )
 # assert False
 interestingCaseFilter = interestingcasefilters.largedeviation.LargeDeviationInterestingCaseFilter(1.0 - alpha)

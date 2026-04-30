@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import sys, math, copy
 import pyscipopt 
 import multiset
@@ -490,10 +491,17 @@ def performCompleteCalibration(inputFile,targetFile):
 
 
 
-# ======================= Run =========================
-# performCompleteCalibration("outShort.txt","out-short-per-class.txt")
-# performCompleteCalibration("testing.txt","testing-achievable-tradeoffs-per-class.txt")
-performCompleteCalibration("out-reduced.txt","out-achievable-tradeoffs-per-class.txt")
-# performCompleteCalibration("out-only-451.txt","out-451-achievable-tradeoffs-per-class.txt")
-# performCompleteCalibration("out-only-460.txt","out-only-460-achievable-tradeoffs-per-class.txt")
-# performCompleteCalibration("debug272.txt",4)
+def _parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input_file", nargs="?", default="out-reduced.txt")
+    parser.add_argument(
+        "output_file",
+        nargs="?",
+        default="out-achievable-tradeoffs-per-class.txt",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = _parse_args()
+    performCompleteCalibration(args.input_file, args.output_file)

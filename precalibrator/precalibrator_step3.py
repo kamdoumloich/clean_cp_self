@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import sys, math, copy
 import pyscipopt 
 
@@ -77,13 +78,18 @@ def processPattern(patternData,calibrationValue,requirementsOnCoveredCases):
             realCoverage += z_values[i,int(line[-1])]
 
         print("Weight for pattern: ",weightValue,"with coverage",realCoverage,"and size of conformance sets",sizeConformanceSets)
+        return {
+            "weight": float(weightValue),
+            "coverage": float(realCoverage),
+            "size": int(sizeConformanceSets),
+        }
     else:
         print("Error: NO SOLUTION FOUND.")
         raise Exception("No Solution Found")
 
 
 
-def performCalibrationStep3(inputFile,step2OutputFile):
+def performCalibrationStep3(inputFile,step2OutputFile,outputFile=None):
 
     # Load input file
     patterns = []
@@ -116,17 +122,36 @@ def performCalibrationStep3(inputFile,step2OutputFile):
             a = a.strip()
             requirementsOnCoveredCases.append(int(a))
         
+    results = []
     for i,a in enumerate(requirementsOnCoveredCases):
         print("Processing pattern:",i,"with number of data points",len(patterns[i]))
-        processPattern(patterns[i],calibrationValue,a)
+        results.append(processPattern(patterns[i],calibrationValue,a))
+
+    if outputFile is not None:
+        with open(outputFile, "w", encoding="utf-8") as outFile:
+            outFile.write(f"calibration_value {calibrationValue}\n")
+            for i, result in enumerate(results):
+                outFile.write(
+                    f"{i} {result['weight']} {result['coverage']} {result['size']}\n"
+                )
 
 
+def _parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input_file", nargs="?", default="outShort.txt")
+    parser.add_argument(
+        "step2_output_file",
+        nargs="?",
+        default="out-short-per-class-input-to-step-3.txt",
+    )
+    parser.add_argument("output_file", nargs="?", default=None)
+    return parser.parse_args()
 
 
-# ======================= Run =========================
-performCalibrationStep3("outShort.txt","out-short-per-class-input-to-step-3.txt")
-# performCompleteCalibration("testing.txt","testing-achievable-tradeoffs-per-class.txt")
-# performCompleteCalibration("out.txt","out-achievable-tradeoffs-per-class.txt")
-# performCompleteCalibration("out-only-451.txt","out-451-achievable-tradeoffs-per-class.txt")
-# performCompleteCalibration("out-only-460.txt","out-only-460-achievable-tradeoffs-per-class.txt")
-# performCompleteCalibration("debug272.txt",4)
+if __name__ == "__main__":
+    args = _parse_args()
+    performCalibrationStep3(
+        args.input_file,
+        args.step2_output_file,
+        args.output_file,
+    )
