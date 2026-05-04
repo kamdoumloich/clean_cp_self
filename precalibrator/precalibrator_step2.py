@@ -1,8 +1,34 @@
 #!/usr/bin/env python3
 import argparse
+import bisect
 import sys, math, copy
 
-def performCalibrationStep2(inputFile,percentage,outputFile):
+
+def _build_interval_start_index(patterns):
+    interval_starts = []
+    for pattern in patterns:
+        pattern_starts = []
+        for intervals in pattern:
+            pattern_starts.append([interval[0] for interval in intervals])
+        interval_starts.append(pattern_starts)
+    return interval_starts
+
+
+def _find_interval_size_for_calibration(intervals, interval_starts, calibrationValue):
+    if not intervals:
+        return None
+
+    candidate_pos = bisect.bisect_right(interval_starts, calibrationValue) - 1
+    if candidate_pos < 0:
+        return None
+
+    start, end, size = intervals[candidate_pos]
+    if start < calibrationValue and end > calibrationValue:
+        return size
+    return None
+
+
+def performCalibrationStep2(inputFile,percentage,outputFile, progress_every=100):
 
     patterns = []
 
@@ -45,6 +71,8 @@ def performCalibrationStep2(inputFile,percentage,outputFile):
             for c in b: # Element in the intervals
                 possibleCalibrationValues.add(c[0])
                 possibleCalibrationValues.add(c[1])
+    if len(possibleCalibrationValues)==0:
+        raise ValueError("No feasible calibration intervals were produced by precalibrator step 1.")
     possibleCalibrationValues = list(possibleCalibrationValues)
     possibleCalibrationValues.sort()
     if possibleCalibrationValues[0]>0.0:
@@ -57,12 +85,28 @@ def performCalibrationStep2(inputFile,percentage,outputFile):
         calibrationValuesToTry.append(middle)
     # print("Calibration Values to try: ",possibleCalibrationValues)
 
+    interval_start_index = _build_interval_start_index(patterns)
+
+    totalCalibrationValues = len(calibrationValuesToTry)
+    print(
+        "[step2] Evaluating",
+        totalCalibrationValues,
+        "candidate calibration values across",
+        len(patterns),
+        "pattern groups.",
+        flush=True,
+    )
+
     bestCalibrationValue = math.inf
     bestSizeConformanceSets = math.inf
     bestSelection = None
 
-    for calibrationValue in calibrationValuesToTry:
-        print("Trying calibration value:",calibrationValue)
+    for candidateNo, calibrationValue in enumerate(calibrationValuesToTry, start=1):
+        # if candidateNo == 1 or candidateNo == totalCalibrationValues or candidateNo % progress_every == 0:
+        #     print(
+        #         f"[step2] Candidate {candidateNo}/{totalCalibrationValues}: {calibrationValue}",
+        #         flush=True,
+        #     )
 
         # Build initial selection
         currentSelection = [0 for patternNo in range(0,len(patterns))]
@@ -71,15 +115,15 @@ def performCalibrationStep2(inputFile,percentage,outputFile):
 
         failedToFindAllInitialValues = False
         for patternNo in range(0,len(patterns)):
-            # Search for
-            foundOne = False
-            for (a,b,c) in patterns[patternNo][0]:
-                if (a<calibrationValue) and (b>calibrationValue):
-                    foundOne = True
-                    currentSizesConformanceSets.append(c)
-            if not foundOne:
+            size = _find_interval_size_for_calibration(
+                patterns[patternNo][0],
+                interval_start_index[patternNo][0],
+                calibrationValue,
+            )
+            if size is None:
                 failedToFindAllInitialValues = True
-            currentSize = 0
+            else:
+                currentSizesConformanceSets.append(size)
 
         if not failedToFindAllInitialValues:
             # print("Initial size:",currentSize)
@@ -93,20 +137,23 @@ def performCalibrationStep2(inputFile,percentage,outputFile):
                 bestNofAddConformanceSets = None
                 for patternNo in range(0,len(patterns)):
                     for target in range(currentSelection[patternNo]+1,len(patterns[patternNo])):
-                        # print("Trying:",patternNo,target)
-                        for (a,b,c) in patterns[patternNo][target]:
-                            if (a<calibrationValue) and (b>calibrationValue):
-                                nextDelta = c-currentSizesConformanceSets[patternNo]
-                                nextAddition = min(target-currentSelection[patternNo],nofSamplesNeeded-currentSize)
-                                nextRatio = nextDelta/float(nextAddition)
-                                if (bestPattern is None) or nextRatio<bestRatio:
-                                    bestRatio = nextRatio
-                                    bestPattern = patternNo
-                                    bestNofAddCoverage = nextAddition
-                                    bestNofAddConformanceSets = nextDelta
+                        size = _find_interval_size_for_calibration(
+                            patterns[patternNo][target],
+                            interval_start_index[patternNo][target],
+                            calibrationValue,
+                        )
+                        if size is not None:
+                            nextDelta = size-currentSizesConformanceSets[patternNo]
+                            nextAddition = min(target-currentSelection[patternNo],nofSamplesNeeded-currentSize)
+                            nextRatio = nextDelta/float(nextAddition)
+                            if (bestPattern is None) or nextRatio<bestRatio:
+                                bestRatio = nextRatio
+                                bestPattern = patternNo
+                                bestNofAddCoverage = nextAddition
+                                bestNofAddConformanceSets = nextDelta
                 if bestNofAddCoverage is None:
                     # Can't achieve needed coverage.
-                    print("Cannot achieve coverage! Number of correct values achievable:",currentSize)
+                    # print("Cannot achieve coverage! Number of correct values achievable:",currentSize)
                     currentSize = math.inf
                     currentSizesConformanceSets[0] = math.inf
                 else:
@@ -114,15 +161,22 @@ def performCalibrationStep2(inputFile,percentage,outputFile):
                     currentSizesConformanceSets[bestPattern] += bestNofAddConformanceSets
                     currentSelection[bestPattern] += bestNofAddCoverage
                     currentSize += bestNofAddCoverage
-            print("Final result with",currentSize," coverage and ",sum(currentSizesConformanceSets)," big conformance sets overall.")
+            print("Final result with ",currentSize," coverage and ",sum(currentSizesConformanceSets)," big conformance sets overall.")
             if bestSizeConformanceSets>=sum(currentSizesConformanceSets):
                 bestCalibrationValue = calibrationValue
                 bestSizeConformanceSets = sum(currentSizesConformanceSets)
                 bestSelection = currentSelection
+                # print(
+                #     f"[step2] New best candidate at {candidateNo}/{totalCalibrationValues}: "
+                #     f"calibration={bestCalibrationValue}, total_size={bestSizeConformanceSets}",
+                #     flush=True,
+                # )
 
 
 
     print("Final calibration value:",bestCalibrationValue,"with conformance sets sizes",bestSizeConformanceSets)
+    if bestSelection is None or not math.isfinite(bestCalibrationValue):
+        raise ValueError("Could not determine a feasible global calibration value in precalibrator step 2.")
 
     with open(outputFile,"w") as resultFile:
         resultFile.write(str(bestCalibrationValue)+"\n")
@@ -142,9 +196,20 @@ def _parse_args():
         nargs="?",
         default="out-short-per-class-input-to-step-3.txt",
     )
+    parser.add_argument(
+        "--progress_every",
+        type=int,
+        default=100,
+        help="Print step-2 progress every N calibration candidates.",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    performCalibrationStep2(args.input_file, args.percentage, args.output_file)
+    performCalibrationStep2(
+        args.input_file,
+        args.percentage,
+        args.output_file,
+        progress_every=max(1, int(args.progress_every)),
+    )

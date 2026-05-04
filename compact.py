@@ -82,7 +82,7 @@ def runCompleteEvaluation(texTargetFile,benchmark,conformanceApproaches,interest
             data = []
             done = False
             while not done:
-                correctCases = 0 
+                correctCases = 0
                 sumSizes = 0
                 nextParameter = 1.0
                 allCases = 0

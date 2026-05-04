@@ -5,6 +5,7 @@ import compact
 import benchmarks.mnist
 import benchmarks.cifar
 import approaches.base
+import approaches.raps
 import approaches.weightedRankBased
 import interestingcasefilters.largedeviation
 
@@ -13,7 +14,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", type=int, required=True)
 parser.add_argument("--dataset", type=str, required=True, choices=['mnist', 'cifar'])
-parser.add_argument("--robust", type=bool, choices=['True', 'False'], default=False)
+parser.add_argument("--robust", type=bool, default=False)
 parser.add_argument("--alpha", type=float, required=True)
 parser.add_argument("--min_samples_per_pattern", type=int, default=10)
 parser.add_argument("--precalibration_backend", type=str, default="precalibrator",
@@ -43,7 +44,7 @@ dict_augmentations = {
     "ORIGINAL": 0,
     # "ROTATION": 3,
     # "HUE": 0.01,
-    "CONTRAST": 1.2,
+    "CONTRAST": 1.6,
     # "HORIZONTAL_FLIP": True,
 }
 
@@ -71,7 +72,7 @@ if dataset == 'cifar':
                                                          test_fraction = test_fraction,
                                                          calibration_fraction = calibration_fraction,
                                                          precalibration_fraction = precalibration_fraction,
-                                                           iterations=TRAIN_ITERATION,
+                                                         iterations=TRAIN_ITERATION,
                                                         )
     n_classes = 10
 elif dataset == 'mnist':
@@ -87,23 +88,38 @@ elif dataset == 'mnist':
 else:
     raise NotImplementedError
 
-baseApproach = approaches.base.MonotoneConformanceEvaluatorSingleDistributionAllAboveThresholdButAtLeastOneClass()
 weightedApproach = approaches.weightedRankBased.WeightedRank2DPredictor(precalibration_data=selected_benchmark.precalibration_data,
                                                                         alpha=alpha, seed=seed_nber,
                                                                         n_classes=n_classes, min_samples_per_pattern=min_samples_per_pattern,
                                                                         path_logs = path_logs,
                                                                         precalibration_backend=precalibration_backend,
                                                                         )
+
+# baseApproach = approaches.base.MonotoneConformanceEvaluatorSingleDistributionAllAboveThresholdButAtLeastOneClass()
+# conformance_approaches = [baseApproach, weightedApproach]
+
+
+raps_kreg = 1
+raps_lambda = 0.01
+rapsApproach = approaches.raps.RAPSConformanceEvaluatorSingleDistribution(n_classes=n_classes,
+                                                                          kreg=raps_kreg,
+                                                                          lamda=raps_lambda,
+                                                                          allow_zero_sets=False,
+                                                                          )
+
+conformance_approaches = [rapsApproach, weightedApproach]
+
+
 # assert False
 interestingCaseFilter = interestingcasefilters.largedeviation.LargeDeviationInterestingCaseFilter(1.0 - alpha)
 compact.runCompleteEvaluation(texTargetFile=str(path_logs)+""+str(latex_file_name), benchmark=selected_benchmark,
-                              conformanceApproaches=[baseApproach,weightedApproach,],
+                              conformanceApproaches=conformance_approaches,
                               interestingCaseFilter=interestingCaseFilter)
 
 print("\n\n\n")
 print("*"*30)
 print("SIMULATION SETTINGS:")
-for name, value in parser.parse_args().__dict__.items():
+for name, value in vars(args).items():
     print(f"  - {name}: {value}")
 print("- AUGMENTATIONS:")
 for aug, value in dict_augmentations.items():

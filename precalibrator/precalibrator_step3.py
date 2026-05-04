@@ -4,7 +4,18 @@ import sys, math, copy
 import pyscipopt 
 
 
-def processPattern(patternData,calibrationValue,requirementsOnCoveredCases):
+DEFAULT_SCIP_TIME_LIMIT = 1200.0 # 20 Min
+DEFAULT_SCIP_MIP_GAP = 1e-3
+
+
+def _configure_scip_model(model, scip_time_limit, scip_mip_gap):
+    if scip_time_limit is not None:
+        model.setParam("limits/time", float(scip_time_limit))
+    if scip_mip_gap is not None:
+        model.setParam("limits/gap", float(scip_mip_gap))
+
+
+def processPattern(patternData,calibrationValue,requirementsOnCoveredCases,):
     """Process individual pattern."""
 
     epsilon = 0.00001
@@ -15,6 +26,7 @@ def processPattern(patternData,calibrationValue,requirementsOnCoveredCases):
     # Build MILP instance
     model = pyscipopt.Model("findset")
     model.hideOutput(True)
+    _configure_scip_model(model, DEFAULT_SCIP_TIME_LIMIT, DEFAULT_SCIP_MIP_GAP)
     z = {}
     z_values = {}
     weight = model.addVar(name="weight", vtype="C", lb=0.0, ub=1.0)
@@ -64,6 +76,11 @@ def processPattern(patternData,calibrationValue,requirementsOnCoveredCases):
     if (model.getStatus()!="infeasible"):
         # print("LAST STATUS: ",model.getStatus())
         solution = model.getBestSol()
+        if solution is None:
+            raise Exception(
+                "No incumbent solution found in precalibrator step 3. "
+                f"SCIP status: {model.getStatus()}."
+            )
         weightValue = model.getSolVal(solution,weight)
         sizeConformanceSets = 0
         for i, line in enumerate(patternData):
@@ -89,7 +106,7 @@ def processPattern(patternData,calibrationValue,requirementsOnCoveredCases):
 
 
 
-def performCalibrationStep3(inputFile,step2OutputFile,outputFile=None):
+def performCalibrationStep3(inputFile,step2OutputFile,outputFile=None,):
 
     # Load input file
     patterns = []
@@ -97,6 +114,8 @@ def performCalibrationStep3(inputFile,step2OutputFile,outputFile=None):
     nofLinesLeft = 0
     for line in open(inputFile).readlines():
         line = line.strip()
+        if line.startswith("Case: "):
+            continue
         if line.startswith("##PATTERN DATA "):
             parts = line.split(" ")
             patternNo = int(parts[2])
@@ -121,11 +140,21 @@ def performCalibrationStep3(inputFile,step2OutputFile,outputFile=None):
         for a in inFile.readlines():
             a = a.strip()
             requirementsOnCoveredCases.append(int(a))
+
+    if len(requirementsOnCoveredCases) != len(patterns):
+        raise ValueError(
+            "Mismatch between number of exported patterns and step-2 coverage requirements."
+        )
+
+    print(
+        f"[step3] SCIP limits: time={DEFAULT_SCIP_TIME_LIMIT}s, mip_gap={DEFAULT_SCIP_MIP_GAP}",
+        flush=True,
+    )
         
     results = []
     for i,a in enumerate(requirementsOnCoveredCases):
         print("Processing pattern:",i,"with number of data points",len(patterns[i]))
-        results.append(processPattern(patterns[i],calibrationValue,a))
+        results.append(processPattern(patterns[i],calibrationValue,a,))
 
     if outputFile is not None:
         with open(outputFile, "w", encoding="utf-8") as outFile:
@@ -145,6 +174,7 @@ def _parse_args():
         default="out-short-per-class-input-to-step-3.txt",
     )
     parser.add_argument("output_file", nargs="?", default=None)
+
     return parser.parse_args()
 
 

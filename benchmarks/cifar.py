@@ -105,7 +105,6 @@ class CIFAR10Benchmark:
         model_specification = '_'.join(f'{k}{v}' for k, v in self.augmentations.items())
         dataset_specification = (
             f'train{self.train_fraction}_test{self.test_fraction}'
-            f'_cal{self.calibration_fraction}_precal{self.precalibration_fraction}'
         )
 
         if robust_training:

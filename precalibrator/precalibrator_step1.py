@@ -13,6 +13,17 @@ def dump_stack(sig, frame):
 
 signal.signal(signal.SIGINT, dump_stack)
 
+DEFAULT_SCIP_TIME_LIMIT = 1200.0 # 20 Min
+DEFAULT_SCIP_MIP_GAP = 1e-3
+DEFAULT_SIZE_SMALL_PATTERN_SET = 10
+
+
+def _configure_scip_model(model, scip_time_limit, scip_mip_gap):
+    if scip_time_limit is not None:
+        model.setParam("limits/time", float(scip_time_limit))
+    if scip_mip_gap is not None:
+        model.setParam("limits/gap", float(scip_mip_gap))
+
 def processPatternSimplified(patternData):
 
     # Simplified approach without linear programming (for big patterns)
@@ -21,8 +32,9 @@ def processPatternSimplified(patternData):
 
     for numberOfCorrectClassifications in range(0,len(patternData)+1):
 
-        sys.stdout.write("(proc:"+str(numberOfCorrectClassifications)+")")
-        sys.stdout.flush()
+        # if numberOfCorrectClassifications%nofClasses==0:
+        #     sys.stdout.write("(proc:"+str(numberOfCorrectClassifications)+")")
+        #     sys.stdout.flush()
 
         weightlayers = []
         for weight in [0.0,0.25,0.5,0.75,1.0]:
@@ -33,7 +45,7 @@ def processPatternSimplified(patternData):
             for pattern in patternData:
                 thisMix = []
                 for i in range(nofClasses):
-                    thisMix.append((1-weight)*pattern[i] + weight*pattern[i+nofClasses])
+                    thisMix.append((1.0-weight)*pattern[i] + weight*pattern[i+nofClasses])
                 thisMix.append(int(pattern[-1]))
                 theseMixes.append(thisMix)
 
@@ -41,7 +53,7 @@ def processPatternSimplified(patternData):
             allCalibrationValuesToConsider = multiset.Multiset([0.0])
             correctClassCalibrationValuesToConsider = multiset.Multiset([])
             for mix in theseMixes:
-                allCalibrationValuesToConsider.update(mix)
+                allCalibrationValuesToConsider.update(mix[:-1])
                 correctClassCalibrationValuesToConsider.add(mix[mix[-1]])
             allCalibrationValuesToConsider = list(allCalibrationValuesToConsider)
             allCalibrationValuesToConsider.sort()
@@ -59,14 +71,15 @@ def processPatternSimplified(patternData):
 
                 while currentPosCorrect>0 and previousPoint>=correctClassCalibrationValuesToConsider[len(patternData)-currentPosCorrect]:
                     currentPosCorrect -= 1
-                
+
                 if currentPosCorrect>=numberOfCorrectClassifications:
                     theseIntervals.append((previousPoint,nextPoint,currentPosCorrect))
 
             weightlayers.append(theseIntervals)
 
-        sys.stdout.write("(mix:"+str(len(weightlayers[0]))+")")
-        sys.stdout.flush()
+        # if numberOfCorrectClassifications%nofClasses==0:
+        #     sys.stdout.write("(mix:"+str(len(weightlayers[0]))+")")
+        #     sys.stdout.flush()
 
         # Postprocess weight layers to single intervals
         positionPoints = set([])
@@ -133,7 +146,7 @@ def processPatternSimplified(patternData):
 
 
 
-def processPattern(patternData):
+def processPattern(patternData,):
     """Process individual pattern."""
     epsilon = 0.00001
     allQualityIntervals = []
@@ -169,6 +182,7 @@ def processPattern(patternData):
                 # Build MILP instance
                 model = pyscipopt.Model("findset")
                 model.hideOutput(True)
+                _configure_scip_model(model, DEFAULT_SCIP_TIME_LIMIT, DEFAULT_SCIP_MIP_GAP)
                 z = {}
                 weight = model.addVar(name="weight", vtype="C", lb=0.0, ub=1.0)
                 # Use epsilons in the following bounds in order to ensure that the same solution is not found twice.
@@ -249,6 +263,7 @@ def processPattern(patternData):
                     for toMinimize in [True,False]:
                         model = pyscipopt.Model("setextent")
                         model.hideOutput(True)
+                        _configure_scip_model(model, DEFAULT_SCIP_TIME_LIMIT, DEFAULT_SCIP_MIP_GAP)
                         weight = model.addVar(name="weight", vtype="C", lb=0.0, ub=1.0)
                         calibrationValue = model.addVar(name="calibrationValue", vtype="C", lb=thisStart, ub=thisEnd)
                         
@@ -283,7 +298,10 @@ def processPattern(patternData):
                                 minWeight = calibrationValueValue
                             else:
                                 solution = model.getBestSol()
-                                minWeight = model.getSolObjVal(solution)
+                                if solution is None:
+                                    minWeight = calibrationValueValue
+                                else:
+                                    minWeight = model.getSolObjVal(solution)
                             
                         else:
                             model.setObjective(
@@ -297,7 +315,10 @@ def processPattern(patternData):
                                 maxWeight = calibrationValueValue
                             else:
                                 solution = model.getBestSol()
-                                maxWeight = model.getSolObjVal(solution)
+                                if solution is None:
+                                    maxWeight = calibrationValueValue
+                                else:
+                                    maxWeight = model.getSolObjVal(solution)
                                 
                         model.freeProb()
 
@@ -353,7 +374,7 @@ def processPattern(patternData):
 
 
 
-def performCompleteCalibration(inputFile,targetFile):
+def performCompleteCalibration(inputFile,targetFile,):
 
     # Load input file<
     patterns = []
@@ -361,6 +382,8 @@ def performCompleteCalibration(inputFile,targetFile):
     nofLinesLeft = 0
     for line in open(inputFile).readlines():
         line = line.strip()
+        if line.startswith("Case: "):
+            continue
         if line.startswith("##PATTERN DATA "):
             parts = line.split(" ")
             patternNo = int(parts[2])
@@ -379,13 +402,18 @@ def performCompleteCalibration(inputFile,targetFile):
 
     # Debuggin
     print("# Patterns:",len(patterns))
+    print(
+        f"[step1] SCIP limits for exact pattern subproblems: "
+        f"time={DEFAULT_SCIP_TIME_LIMIT}s, mip_gap={DEFAULT_SCIP_MIP_GAP}",
+        flush=True,
+    )
 
     # Process each pattern
     allPatternsQualityData = []
     for patternNo in range(len(patterns)):
         print("Processing pattern no.",patternNo,"with # element:",len(patterns[patternNo]))
-        if len(patterns[patternNo])<10:
-            allPatternsQualityData.append(processPattern(patterns[patternNo]))
+        if len(patterns[patternNo])<DEFAULT_SIZE_SMALL_PATTERN_SET:
+            allPatternsQualityData.append(processPattern(patterns[patternNo],))
         else:
             allPatternsQualityData.append(processPatternSimplified(patterns[patternNo]))
 
@@ -504,4 +532,7 @@ def _parse_args():
 
 if __name__ == "__main__":
     args = _parse_args()
-    performCompleteCalibration(args.input_file, args.output_file)
+    performCompleteCalibration(
+        args.input_file,
+        args.output_file,
+    )
