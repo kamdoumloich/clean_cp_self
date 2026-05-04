@@ -1,7 +1,31 @@
 #!/usr/bin/env python3
 import argparse
 import bisect
+import multiprocessing as mp
+import os
 import sys, math, copy
+
+
+_WORKER_PATTERNS = None
+_WORKER_INTERVAL_START_INDEX = None
+_WORKER_NOF_SAMPLES_NEEDED = None
+
+
+def _default_jobs():
+    env_value = os.environ.get("PRECALIBRATOR_STEP2_JOBS")
+    if env_value is not None:
+        return max(1, int(env_value))
+    return max(1, min(os.cpu_count() or 1, 8))
+
+
+def _set_worker_context(patterns, interval_start_index, nof_samples_needed):
+    global _WORKER_PATTERNS
+    global _WORKER_INTERVAL_START_INDEX
+    global _WORKER_NOF_SAMPLES_NEEDED
+
+    _WORKER_PATTERNS = patterns
+    _WORKER_INTERVAL_START_INDEX = interval_start_index
+    _WORKER_NOF_SAMPLES_NEEDED = nof_samples_needed
 
 
 def _build_interval_start_index(patterns):
@@ -28,7 +52,110 @@ def _find_interval_size_for_calibration(intervals, interval_starts, calibrationV
     return None
 
 
-def performCalibrationStep2(inputFile,percentage,outputFile, progress_every=100):
+def _evaluate_calibration_candidate(task):
+    candidateNo, calibrationValue = task
+    patterns = _WORKER_PATTERNS
+    interval_start_index = _WORKER_INTERVAL_START_INDEX
+    nofSamplesNeeded = _WORKER_NOF_SAMPLES_NEEDED
+
+    currentSelection = [0 for patternNo in range(0, len(patterns))]
+    currentSizesConformanceSets = []
+    currentSize = 0
+
+    for patternNo in range(0, len(patterns)):
+        size = _find_interval_size_for_calibration(
+            patterns[patternNo][0],
+            interval_start_index[patternNo][0],
+            calibrationValue,
+        )
+        if size is None:
+            return candidateNo, calibrationValue, False, math.inf, None, currentSize
+        currentSizesConformanceSets.append(size)
+
+    while currentSize < nofSamplesNeeded:
+        bestRatio = None
+        bestPattern = None
+        bestNofAddCoverage = None
+        bestNofAddConformanceSets = None
+
+        for patternNo in range(0, len(patterns)):
+            for target in range(currentSelection[patternNo] + 1, len(patterns[patternNo])):
+                size = _find_interval_size_for_calibration(
+                    patterns[patternNo][target],
+                    interval_start_index[patternNo][target],
+                    calibrationValue,
+                )
+                if size is None:
+                    continue
+
+                nextDelta = size - currentSizesConformanceSets[patternNo]
+                nextAddition = min(
+                    target - currentSelection[patternNo],
+                    nofSamplesNeeded - currentSize,
+                )
+                nextRatio = nextDelta / float(nextAddition)
+                if (bestPattern is None) or nextRatio < bestRatio:
+                    bestRatio = nextRatio
+                    bestPattern = patternNo
+                    bestNofAddCoverage = nextAddition
+                    bestNofAddConformanceSets = nextDelta
+
+        if bestNofAddCoverage is None:
+            return candidateNo, calibrationValue, False, math.inf, None, currentSize
+
+        currentSizesConformanceSets[bestPattern] += bestNofAddConformanceSets
+        currentSelection[bestPattern] += bestNofAddCoverage
+        currentSize += bestNofAddCoverage
+
+    return (
+        candidateNo,
+        calibrationValue,
+        True,
+        sum(currentSizesConformanceSets),
+        currentSelection,
+        currentSize,
+    )
+
+
+def _evaluate_candidates(tasks, patterns, interval_start_index, nofSamplesNeeded, jobs, progress_every):
+    totalCalibrationValues = len(tasks)
+    jobs = max(1, min(int(jobs), totalCalibrationValues))
+    _set_worker_context(patterns, interval_start_index, nofSamplesNeeded)
+
+    if jobs == 1:
+        results = []
+        for candidateNo, task in enumerate(tasks, start=1):
+            if candidateNo == 1 or candidateNo == totalCalibrationValues or candidateNo % progress_every == 0:
+                print(
+                    f"[step2] Candidate {candidateNo}/{totalCalibrationValues}: {task[1]}",
+                    flush=True,
+                )
+            results.append(_evaluate_calibration_candidate(task))
+        return results
+
+    chunksize = max(1, totalCalibrationValues // (jobs * 8))
+    print(f"[step2] Running candidate evaluation with {jobs} workers.", flush=True)
+    results = []
+    with mp.Pool(
+        processes=jobs,
+        initializer=_set_worker_context,
+        initargs=(patterns, interval_start_index, nofSamplesNeeded),
+    ) as pool:
+        for completed, result in enumerate(
+            pool.imap_unordered(_evaluate_calibration_candidate, tasks, chunksize=chunksize),
+            start=1,
+        ):
+            if completed == 1 or completed == totalCalibrationValues or completed % progress_every == 0:
+                print(
+                    f"[step2] Completed {completed}/{totalCalibrationValues} candidates.",
+                    flush=True,
+                )
+            results.append(result)
+
+    return results
+
+
+def performCalibrationStep2(inputFile,percentage,outputFile, progress_every=100, jobs=None):
 
     patterns = []
 
@@ -100,77 +227,23 @@ def performCalibrationStep2(inputFile,percentage,outputFile, progress_every=100)
     bestCalibrationValue = math.inf
     bestSizeConformanceSets = math.inf
     bestSelection = None
+    jobs = _default_jobs() if jobs is None else int(jobs)
+    tasks = list(enumerate(calibrationValuesToTry, start=1))
 
-    for candidateNo, calibrationValue in enumerate(calibrationValuesToTry, start=1):
-        # if candidateNo == 1 or candidateNo == totalCalibrationValues or candidateNo % progress_every == 0:
-        #     print(
-        #         f"[step2] Candidate {candidateNo}/{totalCalibrationValues}: {calibrationValue}",
-        #         flush=True,
-        #     )
+    results = _evaluate_candidates(
+        tasks=tasks,
+        patterns=patterns,
+        interval_start_index=interval_start_index,
+        nofSamplesNeeded=nofSamplesNeeded,
+        jobs=jobs,
+        progress_every=max(1, int(progress_every)),
+    )
 
-        # Build initial selection
-        currentSelection = [0 for patternNo in range(0,len(patterns))]
-        currentSizesConformanceSets = []
-        currentSize = 0
-
-        failedToFindAllInitialValues = False
-        for patternNo in range(0,len(patterns)):
-            size = _find_interval_size_for_calibration(
-                patterns[patternNo][0],
-                interval_start_index[patternNo][0],
-                calibrationValue,
-            )
-            if size is None:
-                failedToFindAllInitialValues = True
-            else:
-                currentSizesConformanceSets.append(size)
-
-        if not failedToFindAllInitialValues:
-            # print("Initial size:",currentSize)
-
-            # Run greedy algorithm
-            done = False
-            while currentSize<nofSamplesNeeded:
-                bestRatio = None
-                bestPattern = None
-                bestNofAddCoverage = None
-                bestNofAddConformanceSets = None
-                for patternNo in range(0,len(patterns)):
-                    for target in range(currentSelection[patternNo]+1,len(patterns[patternNo])):
-                        size = _find_interval_size_for_calibration(
-                            patterns[patternNo][target],
-                            interval_start_index[patternNo][target],
-                            calibrationValue,
-                        )
-                        if size is not None:
-                            nextDelta = size-currentSizesConformanceSets[patternNo]
-                            nextAddition = min(target-currentSelection[patternNo],nofSamplesNeeded-currentSize)
-                            nextRatio = nextDelta/float(nextAddition)
-                            if (bestPattern is None) or nextRatio<bestRatio:
-                                bestRatio = nextRatio
-                                bestPattern = patternNo
-                                bestNofAddCoverage = nextAddition
-                                bestNofAddConformanceSets = nextDelta
-                if bestNofAddCoverage is None:
-                    # Can't achieve needed coverage.
-                    # print("Cannot achieve coverage! Number of correct values achievable:",currentSize)
-                    currentSize = math.inf
-                    currentSizesConformanceSets[0] = math.inf
-                else:
-                    # print("Best: ",bestRatio,bestNofAddCoverage,bestNofAddConformanceSets,bestPattern,currentSelection[bestPattern])
-                    currentSizesConformanceSets[bestPattern] += bestNofAddConformanceSets
-                    currentSelection[bestPattern] += bestNofAddCoverage
-                    currentSize += bestNofAddCoverage
-            print("Final result with ",currentSize," coverage and ",sum(currentSizesConformanceSets)," big conformance sets overall.")
-            if bestSizeConformanceSets>=sum(currentSizesConformanceSets):
-                bestCalibrationValue = calibrationValue
-                bestSizeConformanceSets = sum(currentSizesConformanceSets)
-                bestSelection = currentSelection
-                # print(
-                #     f"[step2] New best candidate at {candidateNo}/{totalCalibrationValues}: "
-                #     f"calibration={bestCalibrationValue}, total_size={bestSizeConformanceSets}",
-                #     flush=True,
-                # )
+    for candidateNo, calibrationValue, feasible, sizeConformanceSets, selection, currentSize in sorted(results):
+        if feasible and bestSizeConformanceSets >= sizeConformanceSets:
+            bestCalibrationValue = calibrationValue
+            bestSizeConformanceSets = sizeConformanceSets
+            bestSelection = selection
 
 
 
@@ -202,6 +275,15 @@ def _parse_args():
         default=100,
         help="Print step-2 progress every N calibration candidates.",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=_default_jobs(),
+        help=(
+            "Number of parallel worker processes for candidate evaluation. "
+            "Can also be set with PRECALIBRATOR_STEP2_JOBS."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -212,4 +294,5 @@ if __name__ == "__main__":
         args.percentage,
         args.output_file,
         progress_every=max(1, int(args.progress_every)),
+        jobs=max(1, int(args.jobs)),
     )
