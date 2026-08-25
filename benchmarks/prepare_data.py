@@ -6,6 +6,7 @@ One-time data / weight preparation for the experiment suite.
   python3 prepare_data.py --cifar10 --cifar100               # torchvision
   python3 prepare_data.py --cifar10c                         # Zenodo, ~2.9 GB
   python3 prepare_data.py --imagenet_root                    # extract val
+  python3 prepare_data.py --imagenet_root /another/path/imagenet
 
 ImageNet: the validation archive CANNOT be downloaded automatically -- it
 requires registration at https://image-net.org. Place these two files in
@@ -27,9 +28,7 @@ extract.
 
 import argparse
 import os
-# import sys
 import tarfile
-# import urllib.request
 
 
 def do_weights(arch, weights):
@@ -99,7 +98,8 @@ def main():
     ap.add_argument("--cifar10", action="store_true")
     ap.add_argument("--cifar100", action="store_true")
     ap.add_argument("--cifar10c", action="store_true")
-    ap.add_argument("--imagenet_root", type=str, default="/scratch/lkd18/data/imagenet")
+    ap.add_argument("--imagenet_root", nargs="?", const="/scratch/lkd18/data/imagenet", default=None)
+    # ap.add_argument("--imagenet_root", type=str, default="/scratch/lkd18/data/imagenet")
     args = ap.parse_args()
 
     ran = False
