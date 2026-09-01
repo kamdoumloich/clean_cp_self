@@ -44,6 +44,7 @@ class VisionClassificationBenchmark:
         probability_batch_size=256,
         heldout_precal=True,
         pretrained=True,
+        expected_max_rotation=None,
     ):
         
         # self.augmentations = augmentations
@@ -61,6 +62,7 @@ class VisionClassificationBenchmark:
         # self.num_workers = num_workers
         self.probability_batch_size = probability_batch_size
         self.pretrained = pretrained
+        expected_max_rotation=expected_max_rotation
         
 
         # self.benchmark_name = None
@@ -89,6 +91,10 @@ class VisionClassificationBenchmark:
 
         if self.list_augmentations[0] != Augmentation.ORIGINAL.value:
             raise ValueError("Augmentations must start with ORIGINAL.")
+        
+        if expected_max_rotation is not None:
+            self.rotation_view_angles = self._validate_rotation_view_order(expected_max_rotation)
+            
 
         if not self.list_augmentations:
             raise ValueError('At least one augmentation must be provided.')
@@ -138,7 +144,7 @@ class VisionClassificationBenchmark:
 
         model_specification = '_'.join(f'{k}{v}' for k, v in self.augmentations.items())
         dataset_specification = (
-            f'train{self.fraction_training}_test{self.fraction_testing}'
+            f'train{self.fraction_training}'
         )
         self.path_saved_model = self._build_model_path(
             model_specification=model_specification,
@@ -193,14 +199,6 @@ class VisionClassificationBenchmark:
             pin_memory=(self.DEVICE == "cuda"),
             generator=this_generator,
         )
-        # testloader = torch.utils.data.DataLoader(
-        #     testing_set,
-        #     batch_size=self.batch_size,
-        #     shuffle=False,
-        #     # num_workers=self.num_workers,
-        #     pin_memory=(self.DEVICE == "cuda"),
-        #     generator=this_generator,
-        # )
         
         self.trainset_full = trainset_full
         self.testset_full = testset_full
@@ -220,26 +218,29 @@ class VisionClassificationBenchmark:
         
         self.model = model
         self.model.eval()
-
-        self.calibration_data = []
-        self.testing_data = []
-        self.precalibration_data = []
-
+        
         softmax = torch.nn.Softmax(dim=1)
-        i = 1
-        for input_set, output_list in [
-            (calibration_set, self.calibration_data),
-            (testing_set, self.testing_data),
-            (precalibration_set, self.precalibration_data),
-        ]:
-            print(f'Loading of probability distributions ({i}/3)...')
-            i += 1
-            self._collect_probability_data(
-                input_set=input_set,
-                output_list=output_list,
-                model=model,
-                softmax_function=softmax,
-            )
+
+        print("Loading of probability distributions (1/3)...")
+        self.calibration_data = self._collect_probability_data(
+            input_set=calibration_set,
+            model=model,
+            softmax_function=softmax,
+        )
+
+        print("Loading of probability distributions (2/3)...")
+        self.testing_data = self._collect_probability_data(
+            input_set=testing_set,
+            model=model,
+            softmax_function=softmax,
+        )
+
+        print("Loading of probability distributions (3/3)...")
+        self.precalibration_data = self._collect_probability_data(
+            input_set=precalibration_set,
+            model=model,
+            softmax_function=softmax,
+        )
 
         for probDist, dataset in [(self.precalibration_data, 'Precalibration'), (self.calibration_data, 'Calibration'), (self.testing_data, 'Testing')]:
             self._evaluate_accuracies(prob_data=probDist, name_set=dataset)
@@ -272,6 +273,55 @@ class VisionClassificationBenchmark:
             f'ITERATION{self.iterations}_{dataset_specification}.pt'
         )
         
+        
+    def _validate_rotation_view_order(self, max_rotation):
+        expected_angles = (
+            list(range(-max_rotation, 0))
+            + list(range(1, max_rotation + 1))
+        )
+
+        actual_angles = []
+
+        # ORIGINAL occupies index 0.
+        for augmentation_name in self.list_augmentations[1:]:
+            if not str(augmentation_name).startswith("ROTATE_PROBE_"):
+                raise ValueError(
+                    "Rotation routing requires every view after ORIGINAL "
+                    f"to be a rotation, but found {augmentation_name!r}."
+                )
+
+            specification = self.augmentations[augmentation_name]
+
+            if (
+                not isinstance(specification, dict)
+                or "degree" not in specification
+            ):
+                raise ValueError(
+                    f"Missing rotation degree for {augmentation_name!r}."
+                )
+
+            degree = float(specification["degree"])
+
+            if not degree.is_integer():
+                raise ValueError(
+                    f"Rotation degree must be an integer, got {degree}."
+                )
+
+            actual_angles.append(int(degree))
+
+        if actual_angles != expected_angles:
+            raise ValueError(
+                "Incorrect rotation-view order.\n"
+                f"Expected: {expected_angles}\n"
+                f"Received: {actual_angles}"
+            )
+
+        # Includes the ORIGINAL view at tensor index 0.
+        return np.asarray(
+            [0] + actual_angles,
+            dtype=np.int64,
+        )
+    
     def _apply_augmentation(self, data, augmentation_name):
         name = str(augmentation_name)
 
@@ -328,78 +378,85 @@ class VisionClassificationBenchmark:
             scheduler.step()
 
         torch.save(model.state_dict(), self.path_saved_model)
-
-
-    def _collect_probability_data(self, input_set, output_list, model, softmax_function):
+                    
+    def _collect_probability_data(self, input_set, model, softmax_function,):
         loader = torch.utils.data.DataLoader(
             input_set,
             batch_size=self.probability_batch_size,
             shuffle=False,
-            # num_workers=1,
             pin_memory=(self.DEVICE == "cuda"),
         )
 
+        probability_batches = []
+        target_batches = []
+
         with torch.no_grad():
+
             for data, target in loader:
-                data = data.to(self.DEVICE, non_blocking=True)
-                target_np = target.cpu().numpy()
+                data = data.to(self.DEVICE, non_blocking=True,)
 
                 batch_size = data.shape[0]
                 n_augmentations = len(self.list_augmentations)
 
                 aug_batches = []
                 for augmentation_name in self.list_augmentations:
-                    data_aug = self._apply_augmentation(data, augmentation_name=augmentation_name)
+                    data_aug = self._apply_augmentation(data, augmentation_name=augmentation_name,)
                     aug_batches.append(data_aug)
 
-                big_batch = torch.cat(aug_batches, dim=0)
+                big_batch = torch.cat(aug_batches, dim=0, )
+
                 outputs = softmax_function(model(self._prepare_model_inputs(big_batch)))
-                outputs_np = outputs.view(n_augmentations, batch_size, -1).cpu().numpy()
+                outputs = outputs.view(n_augmentations, batch_size,-1,)
 
-                for j in range(batch_size):
-                    these_distributions = [
-                        outputs_np[a, j, :]
-                        for a in range(n_augmentations)
-                    ]
-                    output_list.append((these_distributions, target_np[j]))
+                probability_batches.append(outputs.cpu().numpy())
+                target_batches.append(target.cpu().numpy())
 
+        # Concatenate all batches along the sample dimension. to get (n_augmentations, batch_size_i, K)
+        probabilities = np.concatenate(probability_batches, axis=1,)
+        targets = np.concatenate(target_batches, axis=0,)
+
+        return probabilities, targets
 
     def _evaluate_accuracies(self, prob_data, name_set):
+
+        probabilities, targets = prob_data
+
         correct_pred = {
-            aug_name: {classname: 0 for classname in self.classes}
-            for aug_name in self.list_augmentations
-        }
-        total_pred = {
-            aug_name: {classname: 0 for classname in self.classes}
-            for aug_name in self.list_augmentations
+            aug_name: {classname: 0 for classname in self.classes} for aug_name in self.list_augmentations
         }
 
-        for distributions, label in prob_data:
+        total_pred = {
+            aug_name: {classname: 0 for classname in self.classes} for aug_name in self.list_augmentations
+        }
+
+        # (n_augmentations, n_samples, K)
+        for sample_idx, label in enumerate(targets):
+
             label = int(label)
             cls_name = self.classes[label]
-            for aug_name, dist in zip(self.list_augmentations, distributions):
+
+            # (n_augmentations, K)
+            distributions = probabilities[:, sample_idx, :]
+
+            for aug_name, dist in zip(self.list_augmentations, distributions,):
                 if int(np.argmax(dist)) == label:
                     correct_pred[aug_name][cls_name] += 1
+
                 total_pred[aug_name][cls_name] += 1
 
         self.accuracies[name_set] = []
         self.class_accuracies[name_set] = {}
 
         for augmentation_name in self.list_augmentations:
-            # print(
-            #     '==========[Accuracy on the', name_set,
-            #     'dataset (Augmentation:', augmentation_name, ')]=========='
-            # )
 
             self.class_accuracies[name_set][augmentation_name] = []
-
             for cls_name in self.classes:
-                # cls_name = cls_name.replace('_', '\\_')
+
                 c = correct_pred[augmentation_name][cls_name]
                 t = total_pred[augmentation_name][cls_name]
+
                 accuracy = round(100.0 * c / t, 2) if t > 0 else 0.0
 
-                # print('Class', cls_name, ':', accuracy, '% (', t, 'cases)')
                 self.class_accuracies[name_set][augmentation_name].append((cls_name, accuracy, t))
 
             total_correct = sum(correct_pred[augmentation_name].values())
@@ -407,7 +464,9 @@ class VisionClassificationBenchmark:
             overall = round(100.0 * total_correct / total_cases, 2) if total_cases > 0 else 0.0
 
             self.accuracies[name_set].append(overall)
-            print('Overall accuracy:', overall, '% (', total_cases, 'cases)', ' ', augmentation_name)
+
+            # TODO: removed at the moment
+            # print('Overall accuracy:', overall, '% (', total_cases, 'cases)', augmentation_name)
 
         print('\n', flush=True)
 

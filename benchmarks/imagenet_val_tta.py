@@ -148,10 +148,19 @@ class ImageNetValBenchmarkTTA:
         return True
 
 
+    # @staticmethod
+    # def _get_entries_by_idx(logits, labels, idx):
+    #     V = logits.shape[0]
+    #     return [([logits[v, i] for v in range(V)], int(labels[i])) for i in idx]
+
     @staticmethod
     def _get_entries_by_idx(logits, labels, idx):
-        V = logits.shape[0]
-        return [([logits[v, i] for v in range(V)], int(labels[i])) for i in idx]
+        idx = np.asarray(idx, dtype=np.int64)
+
+        probabilities = logits[:, idx, :]
+        targets = labels[idx]
+
+        return probabilities, targets
 
     # ------------------------- cache build / load -------------------------
     

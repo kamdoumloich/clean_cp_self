@@ -68,6 +68,7 @@ class CIFAR10Benchmark(VisionClassificationBenchmark):
         # augmentations,
         path_logs,
         policy_name,
+        expected_max_rotation,
         arch="resnet18",
         weights="IMAGENET1K_V1",
         seed=42,
@@ -109,6 +110,7 @@ class CIFAR10Benchmark(VisionClassificationBenchmark):
             # num_workers=num_workers,
             probability_batch_size=batch_size,
             pretrained=pretrained,
+            expected_max_rotation=expected_max_rotation,
         )
 
     def _load_datasets(self):

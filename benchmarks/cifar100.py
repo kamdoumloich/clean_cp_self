@@ -56,6 +56,7 @@ class CIFAR100Benchmark(VisionClassificationBenchmark):
         # augmentations,
         path_logs,
         policy_name,
+        expected_max_rotation,
         seed=42,
         arch="resnet18",
         weights="IMAGENET1K_V1",
@@ -96,6 +97,7 @@ class CIFAR100Benchmark(VisionClassificationBenchmark):
             heldout_precal=heldout_precal,
             # num_workers=num_workers,
             probability_batch_size=batch_size,
+            expected_max_rotation=expected_max_rotation,
             pretrained=pretrained,
         )
         
