@@ -67,8 +67,8 @@ class LargeDeviationInterestingCaseFilter:
                 for (difference,index) in differences[-5:]:
                     allLines.append("\\item Case no.~"+str(index)+" with real class "+str(self.casesByPredictor[predictorKeys[predA]][2][index][2]))
                     allLines.append("\\begin{itemize}")
-                    for p in self.casesByPredictor[predictorKeys[predA]][2][index][1]:
-                        allLines.append("\\item Prob.Dist.: "+str(p))
+                    # for p in self.casesByPredictor[predictorKeys[predA]][2][index][1]:
+                    #     allLines.append("\\item Prob.Dist.: "+str(p))
                     for predC in range(0,len(predictorKeys)):
                         allLines.append("\\item Conf.Pred."+str(predC)+" result: "+str(self.casesByPredictor[predictorKeys[predC]][2][index][3]))
                     allLines.append("\\end{itemize}")
