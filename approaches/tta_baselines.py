@@ -22,7 +22,7 @@ Changes w.r.t. the previous version (all defaults preserve the old numerics):
 
 import numpy as np
 
-EPS = 1e-12
+EPS = 1e-24
 
 _VALID_SCORES = ("thr", "aps", "raps")
 _VALID_LEADING_MODES = ("mean", "individual")
@@ -46,16 +46,17 @@ class _MixturePredictorBase:
     """
 
     # ------------------------------------------------------------------ init
-    def __init__(self, precalibration_data, alpha, path_logs, n_classes=1000,
+    def __init__(self, precalibration_data, alpha, path_logs,
+                 n_augs:int, n_classes=1000,
                  seed=2026, verbose=True, inputs_type="logits",
-                 score="aps", kreg=1, lamda=0.01,
+                 scoring_function="aps", kreg=1, lamda=0.01,
                  n_leading_views=1, leading_views_mode="individual",
                  reference_view=0, leading_pool="arithmetic",
-                 leading_others_as_aug=False, aps_randomized=True):
+                 leading_others_as_aug=False, aps_randomized=True,):
 
         if inputs_type not in ("logits", "probs"):
             raise ValueError("inputs_type must be 'logits' or 'probs'.")
-        if score not in _VALID_SCORES:
+        if scoring_function not in _VALID_SCORES:
             raise ValueError(f"score must be one of {_VALID_SCORES}.")
         if leading_views_mode not in _VALID_LEADING_MODES:
             raise ValueError(f"leading_views_mode must be one of {_VALID_LEADING_MODES}.")
@@ -63,7 +64,7 @@ class _MixturePredictorBase:
             raise ValueError(f"leading_pool must be one of {_VALID_LEADING_POOLS}.")
 
         self.inputs_type = inputs_type
-        self.score = score
+        self.scoring_function = scoring_function
         self.kreg = int(kreg)
         self.lamda = float(lamda)
         self.n_classes = int(n_classes)
@@ -73,21 +74,20 @@ class _MixturePredictorBase:
         self.path_logs = path_logs
         self.aps_randomized = bool(aps_randomized)
         self._rng = np.random.default_rng(self.seed)
+        self.at_least_one_calibration = False
 
         self.p_views_pre, self.targets_pre = self._parse(precalibration_data)
         if self.p_views_pre.ndim != 3:
-            raise ValueError(
-                f"Precalibration views must be (M,N,K), got {self.p_views_pre.shape}."
-            )
-        self.n_views = int(self.p_views_pre.shape[0])
+            raise ValueError(f"Precalibration views must be (M,N,K), got {self.p_views_pre.shape}.")
+        
+        self.n_views = int(n_augs) + n_leading_views # original policy added 
+        # self.n_views = int(self.p_views_pre.shape[0])
         self.n = int(self.p_views_pre.shape[1])
         self.K = int(self.p_views_pre.shape[2])
 
         L = int(n_leading_views)
         if not (1 <= L < self.n_views):
-            raise ValueError(
-                f"n_leading_views must satisfy 1 <= L < n_views ({self.n_views}), got {L}."
-            )
+            raise ValueError(f"n_leading_views must satisfy 1 <= L < n_views ({self.n_views}), got {L}.")
         self.n_leading_views = L
         self.leading_views_mode = leading_views_mode
         self.leading_pool = leading_pool
@@ -95,10 +95,7 @@ class _MixturePredictorBase:
         self.reference_view = int(reference_view)
 
         if self.leading_views_mode == "individual" and not (0 <= self.reference_view < L):
-            raise ValueError(
-                "reference_view must lie inside the leading block "
-                f"[0,{L}) when leading_views_mode='individual'."
-            )
+            raise ValueError( "reference_view must lie inside the leading block [0,{L}) when leading_views_mode='individual'.")
 
         self.aug_indices = self._compute_aug_indices()
         self.A = len(self.aug_indices)
@@ -119,15 +116,31 @@ class _MixturePredictorBase:
     # ------------------------------------------------------------------ data
     @staticmethod
     def _parse(data):
-        """Accepts [(list_of_views, target), ...] only."""
-        tmp_dist, tmp_targets = zip(*data)
-        per_view = list(zip(*tmp_dist))
-        V = np.stack([np.stack(v, axis=0) for v in per_view], axis=0).astype(np.float64)
-        return V, np.asarray(tmp_targets, dtype=np.int64)
+        # tmp_dist, tmp_targets = zip(*data)
+        # per_view = list(zip(*tmp_dist))
+
+        V, y = data
+
+        V = np.asarray(V, dtype=np.float64)
+        y = np.asarray(y, dtype=np.int64)
+
+        if V.ndim != 3:
+            raise ValueError(f"Expected V with shape (n_augmentations, n_samples, K), got {V.shape}.")
+
+        if y.ndim != 1:
+            raise ValueError(f"Expected y to be 1-dimensional, got {y.shape}.")
+
+        if V.shape[1] != y.shape[0]:
+            raise ValueError(f"Number of samples in V and y does not match: V has {V.shape[1]} samples, y has {y.shape[0]}.")
+
+        return V, y
+
+        # V = np.stack([np.stack(v, axis=0) for v in per_view], axis=0).astype(np.float64)
+        # return V, np.asarray(tmp_targets, dtype=np.int64)
 
     @staticmethod
     def _looks_like_probs(V):
-        return bool(np.all(V >= -1e-9) and np.allclose(V.sum(axis=-1), 1.0, atol=1e-3))
+        return bool(np.all(V >= -1e-12) and np.allclose(V.sum(axis=-1), 1.0, atol=1e-6))
 
     def _to_logits(self, V):
         return np.asarray(V, dtype=np.float64) if self.inputs_type == "logits" \
@@ -250,7 +263,7 @@ class _MixturePredictorBase:
 
     def _all_scores(self, P, score=None, kreg=None, lamda=None, u=None, chunk=None):
         """Score matrix for every class. P: (N,K) or (K,)."""
-        score = self.score if score is None else score
+        score = self.scoring_function if score is None else score
         P2 = np.asarray(P, dtype=np.float64)
         one_d = (P2.ndim == 1)
         if one_d:
@@ -286,7 +299,8 @@ class _MixturePredictorBase:
     # ------------------------------------------------- quantile / set-building
     @staticmethod
     def _conformal_quantile(scores, alpha):
-        sc = np.asarray(scores, dtype=np.float64).ravel()
+        assert len(scores.shape) == 1, "Error in function '_conformal_quantile'"
+        sc = np.asarray(scores, dtype=np.float64)
         n = sc.shape[0]
         k = int(np.ceil((n + 1) * (1.0 - float(alpha))))
         if k > n:
@@ -294,8 +308,9 @@ class _MixturePredictorBase:
         return float(np.partition(sc, k - 1)[k - 1])
 
     @staticmethod
-    def _set_from_scores(scores, tau, at_least_one=True):
-        s = np.asarray(scores, dtype=np.float64).ravel()
+    def _set_from_scores_predict_only(scores, tau, at_least_one=False):
+        assert len(scores.shape) == 1, "Error in function '_set_from_scores_predict_only'"
+        s = np.asarray(scores, dtype=np.float64)
         K = s.shape[0]
         if tau is None:
             raise RuntimeError("No calibration value available.")
@@ -321,12 +336,12 @@ class _MixturePredictorBase:
                 q = self._conformal_quantile(S[rows, y], self.alpha)
                 sizes = np.maximum((S <= q).sum(axis=1), 1)
                 avg = float(np.mean(sizes))
-                if avg < best[0] - 1e-12:
+                if avg < best[0] - EPS:
                     best = (avg, int(kreg), float(lam))
         return best[1], best[2], best[0]
 
     def _maybe_tune_raps(self, kregs=(1, 2), lamdas=(0.001, 0.01, 0.1)):
-        if self.score != "raps":
+        if self.scoring_function != "raps":
             return
         Z = self._predictive_distribution(self.p_views_pre)
         self.kreg, self.lamda, avg = self._tune_raps(Z, self.targets_pre, kregs, lamdas)
@@ -362,9 +377,9 @@ class _MixturePredictorBase:
         if tau is None:
             raise RuntimeError("No calibration value available. Call calibrate() first.")
         z = self.compute_prob_dist(predictedLogitVector[0], list(predictedLogitVector[1:]))
-        u = float(self._rng.uniform()) if (self.score == "aps" and self.aps_randomized) else 0.0
-        sc = self._all_scores(z, score=self.score, u=u)
-        return self._set_from_scores(sc, tau)
+        u = float(self._rng.uniform()) if (self.scoring_function == "aps" and self.aps_randomized) else 0.0
+        sc = self._all_scores(z, score=self.scoring_function, u=u)
+        return self._set_from_scores_predict_only(sc, tau, at_least_one=self.at_least_one_calibration)
 
 
 class TTAMeanPredictor(_MixturePredictorBase):
@@ -373,10 +388,10 @@ class TTAMeanPredictor(_MixturePredictorBase):
         self._maybe_tune_raps()
 
     def texInfo(self):
-        return f"TTA-Avg + {self.score.upper()}"
+        return f"TTA-Avg + {self.scoring_function.upper()}"
 
     def getShortName(self):
-        return f"TTA-Mean-{self.A}A-{self.score}"
+        return f"TTA-Mean-{self.A}A-{self.scoring_function}"
 
 
 class OriginalOnlyPredictor(_MixturePredictorBase):
@@ -390,10 +405,10 @@ class OriginalOnlyPredictor(_MixturePredictorBase):
         return self._pool_leading(V)
 
     def texInfo(self):
-        return f"No-TTA (leading views) + {self.score.upper()}"
+        return f"No-TTA (leading views) + {self.scoring_function.upper()}"
 
     def getShortName(self):
-        return f"Orig-{self.score}"
+        return f"Orig-{self.scoring_function}"
 
 
 class GlobalWeightPredictor(_MixturePredictorBase):
@@ -439,7 +454,7 @@ class GlobalWeightPredictor(_MixturePredictorBase):
         self._maybe_tune_raps()
 
     def texInfo(self):
-        return f"TTA-Learned + {self.score.upper()}"
+        return f"TTA-Learned + {self.scoring_function.upper()}"
 
     def getShortName(self):
-        return f"Global-w-{self.A}A-{self.score}"
+        return f"Global-w-{self.A}A-{self.scoring_function}"
