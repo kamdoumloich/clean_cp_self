@@ -1,0 +1,213 @@
+\documentclass[parskip=half]{scrartcl}
+        \usepackage{tikz}
+        \usepackage{pxfonts}
+        \usepackage[a4paper,left=1cm,right=1cm,top=2cm,bottom=3cm]{geometry}
+        \title{Conformance Testing Report}
+        \author{\relax}\date{\today}
+        \begin{document} \maketitle
+        \section{Benchmark information}This part has been removed for the moment.\section{{Predictor Information}}\subsection{Conformance Predictor 0 }Quantile-Cell THR Conformal Prediction: rotated views define a frozen quantile partition with ? possible ranges. Each range owns a distinct THR split-conformal predictor and is calibrated only with calibration samples routed to that range. Prediction uses the range-specific finite-sample conformal threshold; ranges with insufficient calibration mass use the conservative full-set threshold.\subsection{Conformance Predictor 1 }No-TTA (leading views) + THR\section{Direct comparison between all conformance prediction approaches}
+The following comparison shows the performance of different conformance predictors. The X Axis shows the needed precision, while the Y axis shows, for each conformance prediction approach, precision on the conformance calibration set and the resulting mean conformance set sizes.
+
+\begin{tikzpicture}[yscale=1.25]\draw (0,0) rectangle (10,20);
+\draw (0,5) -- +(10,0);\draw (0,10) -- +(10,0);\node[anchor=east] at (-0.25,2.5) {\rotatebox{90}{\scriptsize \textsf{ QCTHR-G0, Accuracy}}};
+\node[anchor=east] at (0,7.5) {\rotatebox{90}{\scriptsize \textsf{ QCTHR-G0, Set sizes}}};
+\draw (0,15) -- +(10,0);\node[anchor=east] at (-0.25,12.5) {\rotatebox{90}{\scriptsize \textsf{ Orig-thr, Accuracy}}};
+\node[anchor=east] at (0,17.5) {\rotatebox{90}{\scriptsize \textsf{ Orig-thr, Set sizes}}};
+\draw[color=black!50!white] (0,0) -- +(10,5);
+\draw[color=black!50!white] (0,10) -- +(10,5);
+\draw[color=black!50!white] (0.6162074760933258,0) -- +(0,-0.2) node[below] {\scriptsize 0.25};
+\draw[color=black!50!white,dashed] (0.6162074760933258,0) -- +(0,20);
+\draw[color=black!50!white] (1.4805569683900757,0) -- +(0,-0.2) node[below] {\scriptsize 0.5};
+\draw[color=black!50!white,dashed] (1.4805569683900757,0) -- +(0,20);
+\draw[color=black!50!white] (2.5592686215798315,0) -- +(0,-0.2) node[below] {\scriptsize 0.7};
+\draw[color=black!50!white,dashed] (2.5592686215798315,0) -- +(0,20);
+\draw[color=black!50!white] (3.4031572380103423,0) -- +(0,-0.2) node[below] {\scriptsize 0.8};
+\draw[color=black!50!white,dashed] (3.4031572380103423,0) -- +(0,20);
+\draw[color=black!50!white] (4.804262935175594,0) -- +(0,-0.2) node[below] {\scriptsize 0.9};
+\draw[color=black!50!white,dashed] (4.804262935175594,0) -- +(0,20);
+\draw[color=black!50!white] (6.117632329015766,0) -- +(0,-0.2) node[below] {\scriptsize 0.95};
+\draw[color=black!50!white,dashed] (6.117632329015766,0) -- +(0,20);
+\draw[color=black!50!white] (7.619537161252646,0) -- +(0,-0.2) node[below] {\scriptsize 0.98};
+\draw[color=black!50!white,dashed] (7.619537161252646,0) -- +(0,20);
+\draw[color=black!50!white] (8.49809516776312,0) -- +(0,-0.2) node[below] {\scriptsize 0.99};
+\draw[color=black!50!white,dashed] (8.49809516776312,0) -- +(0,20);
+\draw[color=black!50!white] (9.516494638655868,0) -- +(0,-0.2) node[below] {\scriptsize 0.9975};
+\draw[color=black!50!white,dashed] (9.516494638655868,0) -- +(0,20);
+\draw[color=black!50!white] (10,0.3081037380466629) -- +(0.2,0) node[right] {\scriptsize 0.25};
+\draw[color=black!50!white] (10,0.7402784841950378) -- +(0.2,0) node[right] {\scriptsize 0.5};
+\draw[color=black!50!white] (10,1.2796343107899157) -- +(0.2,0) node[right] {\scriptsize 0.7};
+\draw[color=black!50!white] (10,1.7015786190051712) -- +(0.2,0) node[right] {\scriptsize 0.8};
+\draw[color=black!50!white] (10,2.402131467587797) -- +(0.2,0) node[right] {\scriptsize 0.9};
+\draw[color=black!50!white] (10,3.058816164507883) -- +(0.2,0) node[right] {\scriptsize 0.95};
+\draw[color=black!50!white] (10,3.809768580626323) -- +(0.2,0) node[right] {\scriptsize 0.98};
+\draw[color=black!50!white] (10,4.24904758388156) -- +(0.2,0) node[right] {\scriptsize 0.99};
+\draw[color=black!50!white] (10,4.758247319327934) -- +(0.2,0) node[right] {\scriptsize 0.9975};
+\draw[color=black!50!white,dashed] (0,5.75095241611844) -- +(10,0);
+\draw[color=black!50!white] (10,5.75095241611844) -- +(0.2,0) node[right] {\scriptsize 1};
+\draw[color=black!50!white,dashed] (0,6.190231419373676) -- +(10,0);
+\draw[color=black!50!white] (10,6.190231419373676) -- +(0.2,0) node[right] {\scriptsize 2};
+\draw[color=black!50!white,dashed] (0,6.941183835492116) -- +(10,0);
+\draw[color=black!50!white] (10,6.941183835492116) -- +(0.2,0) node[right] {\scriptsize 5};
+\draw[color=black!50!white,dashed] (0,7.597868532412203) -- +(10,0);
+\draw[color=black!50!white] (10,7.597868532412203) -- +(0.2,0) node[right] {\scriptsize 10};
+\draw[color=black!50!white,dashed] (0,8.298421380994828) -- +(10,0);
+\draw[color=black!50!white] (10,8.298421380994828) -- +(0.2,0) node[right] {\scriptsize 20};
+\draw[color=black!50!white,dashed] (0,9.259721515804962) -- +(10,0);
+\draw[color=black!50!white] (10,9.259721515804962) -- +(0.2,0) node[right] {\scriptsize 50};
+\draw[color=black!50!white,dashed] (0,10.0) -- +(10,0);
+\draw[color=black!50!white] (10,10.0) -- +(0.2,0) node[right] {\scriptsize 100};
+\draw[color=black!50!white,dashed] (0,10.986249892032706) -- +(10,0);
+\draw[color=black!50!white] (10,10.986249892032706) -- +(0.2,0) node[right] {\scriptsize 250};
+\draw[color=black!50!white,dashed] (0,12.484912641072047) -- +(10,0);
+\draw[color=black!50!white] (10,12.484912641072047) -- +(0.2,0) node[right] {\scriptsize 1000};
+\draw[color=black!50!white] (10,10.308103738046663) -- +(0.2,0) node[right] {\scriptsize 0.25};
+\draw[color=black!50!white] (10,10.740278484195038) -- +(0.2,0) node[right] {\scriptsize 0.5};
+\draw[color=black!50!white] (10,11.279634310789916) -- +(0.2,0) node[right] {\scriptsize 0.7};
+\draw[color=black!50!white] (10,11.701578619005172) -- +(0.2,0) node[right] {\scriptsize 0.8};
+\draw[color=black!50!white] (10,12.402131467587797) -- +(0.2,0) node[right] {\scriptsize 0.9};
+\draw[color=black!50!white] (10,13.058816164507883) -- +(0.2,0) node[right] {\scriptsize 0.95};
+\draw[color=black!50!white] (10,13.809768580626322) -- +(0.2,0) node[right] {\scriptsize 0.98};
+\draw[color=black!50!white] (10,14.24904758388156) -- +(0.2,0) node[right] {\scriptsize 0.99};
+\draw[color=black!50!white] (10,14.758247319327934) -- +(0.2,0) node[right] {\scriptsize 0.9975};
+\draw[color=black!50!white,dashed] (0,15.750952416118439) -- +(10,0);
+\draw[color=black!50!white] (10,15.750952416118439) -- +(0.2,0) node[right] {\scriptsize 1};
+\draw[color=black!50!white,dashed] (0,16.190231419373678) -- +(10,0);
+\draw[color=black!50!white] (10,16.190231419373678) -- +(0.2,0) node[right] {\scriptsize 2};
+\draw[color=black!50!white,dashed] (0,16.941183835492115) -- +(10,0);
+\draw[color=black!50!white] (10,16.941183835492115) -- +(0.2,0) node[right] {\scriptsize 5};
+\draw[color=black!50!white,dashed] (0,17.597868532412203) -- +(10,0);
+\draw[color=black!50!white] (10,17.597868532412203) -- +(0.2,0) node[right] {\scriptsize 10};
+\draw[color=black!50!white,dashed] (0,18.298421380994828) -- +(10,0);
+\draw[color=black!50!white] (10,18.298421380994828) -- +(0.2,0) node[right] {\scriptsize 20};
+\draw[color=black!50!white,dashed] (0,19.259721515804962) -- +(10,0);
+\draw[color=black!50!white] (10,19.259721515804962) -- +(0.2,0) node[right] {\scriptsize 50};
+\draw[color=black!50!white,dashed] (0,20.0) -- +(10,0);
+\draw[color=black!50!white] (10,20.0) -- +(0.2,0) node[right] {\scriptsize 100};
+\draw[color=black!50!white,dashed] (0,20.986249892032706) -- +(10,0);
+\draw[color=black!50!white] (10,20.986249892032706) -- +(0.2,0) node[right] {\scriptsize 250};
+\draw[color=black!50!white,dashed] (0,22.484912641072047) -- +(10,0);
+\draw[color=black!50!white] (10,22.484912641072047) -- +(0.2,0) node[right] {\scriptsize 1000};
+\end{tikzpicture}\section{Interesting cases found Calibration}
+\textbf{Cases filtered:} Interesting cases with large deviation for target probability 0.99
+
+
+\textbf{Parameter/Probability Combinations considered:}\begin{enumerate}
+\item (none)
+\end{enumerate}\section{Performance on test data}
+\paragraph{Predictor:QCTHR-G0} calibration at alpha=0.01. calibration value={0: 0.9999909826819908, 1: 0.9996272489262731}. Correct: 2479/2500\\
+Average set size: 43.2396   Coverage: 0.9916\\
+Set size histogram (0..K):\\
+0 | 131 | 79 | 70 | 76 | 62 | 57 | 37 | 41 | 37 | 33 | 24 | 29 | 28 | 30 | 34 | 28 | 23 | 23 | 24 | 42 | 26 | 25 | 28 | 17 | 17 | 24 | 26 | 19 | 21 | 17 | 16 | 11 | 14 | 18 | 17 | 19 | 19 | 26 | 16 | 19 | 14 | 17 | 20 | 23 | 13 | 14 | 25 | 21 | 12 | 18 | 15 | 17 | 19 | 16 | 22 | 14 | 27 | 13 | 7 | 10 | 18 | 18 | 13 | 13 | 15 | 18 | 21 | 16 | 11 | 18 | 19 | 11 | 12 | 17 | 13 | 18 | 15 | 19 | 13 | 23 | 27 | 22 | 19 | 26 | 15 | 22 | 26 | 21 | 20 | 17 | 26 | 31 | 23 | 17 | 23 | 29 | 29 | 28 | 51 | 67\\
+\paragraph{Metrics for QCTHR-G0}~\\
+\begin{tabular}{l r}
+\hline
+Coverage (target 0.990) & 0.9916 $\pm$ 0.0018 \\
+Average set size & 43.240 \\
+Median set size & 38.0 \\
+Singleton rate (size $=1$) & 0.0524 \\
+Large-set rate (size $\geq 25$) & 0.5984 \\
+\textbf{SSCV} (worst size-bin gap) & \textbf{0.0156} \\
+Class-coverage spread (max$-$min) & 0.1053 \\
+Class-coverage std & 0.0187 \\
+\textbf{CovGap} (difficulty-conditioned) & \textbf{0.0036} \\
+~~Weighted CovGap & 0.0036 \\
+~~Worst under-coverage & -0.0060 \\
+\hline
+\end{tabular}\\[0.5em]
+\textsf{\scriptsize Size-stratified coverage (SSCV bins):}\\
+\begin{tabular}{l r r}
+\hline
+Size range & Count & Coverage \\
+\hline
+1 & 131 & 0.9924 \\
+2--3 & 149 & 0.9933 \\
+4--6 & 195 & 0.9744 \\
+7--10 & 148 & 0.9865 \\
+11--100 & 1877 & 0.9936 \\
+\hline
+\end{tabular}\\[0.5em]
+\textsf{\scriptsize Difficulty-stratified coverage (CovGap bins, by $1-\max p_{\mathrm{orig}}$):}\\
+\begin{tabular}{l r r}
+\hline
+Difficulty range & Count & Coverage \\
+\hline
+0.000--0.000 & 250 & 0.9920 \\
+0.000--0.001 & 250 & 0.9920 \\
+0.001--0.009 & 250 & 0.9840 \\
+0.009--0.031 & 250 & 0.9880 \\
+0.031--0.090 & 250 & 0.9920 \\
+0.090--0.185 & 250 & 0.9880 \\
+0.185--0.307 & 250 & 0.9960 \\
+0.307--0.444 & 250 & 0.9920 \\
+0.444--0.563 & 250 & 0.9960 \\
+0.563--0.855 & 250 & 0.9960 \\
+\hline
+\end{tabular}\\[0.5em]
+\paragraph{Predictor:Orig-thr} calibration at alpha=0.01. calibration value=0.9999889228364931. Correct: 2477/2500\\
+Average set size: 41.4896   Coverage: 0.9908\\
+Set size histogram (0..K):\\
+0 | 116 | 79 | 75 | 80 | 75 | 48 | 48 | 44 | 39 | 26 | 35 | 35 | 38 | 32 | 35 | 18 | 38 | 31 | 32 | 27 | 18 | 25 | 33 | 16 | 30 | 17 | 23 | 15 | 23 | 10 | 14 | 32 | 16 | 19 | 22 | 17 | 16 | 18 | 22 | 24 | 17 | 20 | 23 | 18 | 18 | 15 | 14 | 14 | 19 | 20 | 20 | 20 | 26 | 12 | 13 | 12 | 13 | 14 | 12 | 20 | 12 | 12 | 17 | 16 | 17 | 18 | 15 | 10 | 12 | 12 | 18 | 20 | 13 | 13 | 19 | 13 | 30 | 19 | 20 | 19 | 20 | 18 | 17 | 22 | 16 | 28 | 33 | 16 | 13 | 18 | 25 | 18 | 14 | 19 | 26 | 27 | 23 | 29 | 45 | 47\\
+\paragraph{Metrics for Orig-thr}~\\
+\begin{tabular}{l r}
+\hline
+Coverage (target 0.990) & 0.9908 $\pm$ 0.0019 \\
+Average set size & 41.490 \\
+Median set size & 35.0 \\
+Singleton rate (size $=1$) & 0.0464 \\
+Large-set rate (size $\geq 25$) & 0.5828 \\
+\textbf{SSCV} (worst size-bin gap) & \textbf{0.0146} \\
+Class-coverage spread (max$-$min) & 0.1053 \\
+Class-coverage std & 0.0191 \\
+\textbf{CovGap} (difficulty-conditioned) & \textbf{0.0032} \\
+~~Weighted CovGap & 0.0032 \\
+~~Worst under-coverage & -0.0060 \\
+\hline
+\end{tabular}\\[0.5em]
+\textsf{\scriptsize Size-stratified coverage (SSCV bins):}\\
+\begin{tabular}{l r r}
+\hline
+Size range & Count & Coverage \\
+\hline
+1 & 116 & 0.9914 \\
+2--3 & 154 & 0.9870 \\
+4--6 & 203 & 0.9754 \\
+7--10 & 157 & 0.9936 \\
+11--100 & 1870 & 0.9925 \\
+\hline
+\end{tabular}\\[0.5em]
+\textsf{\scriptsize Difficulty-stratified coverage (CovGap bins, by $1-\max p_{\mathrm{orig}}$):}\\
+\begin{tabular}{l r r}
+\hline
+Difficulty range & Count & Coverage \\
+\hline
+0.000--0.000 & 250 & 0.9920 \\
+0.000--0.001 & 250 & 0.9920 \\
+0.001--0.009 & 250 & 0.9840 \\
+0.009--0.031 & 250 & 0.9880 \\
+0.031--0.090 & 250 & 0.9880 \\
+0.090--0.185 & 250 & 0.9880 \\
+0.185--0.307 & 250 & 0.9960 \\
+0.307--0.444 & 250 & 0.9920 \\
+0.444--0.563 & 250 & 0.9920 \\
+0.563--0.855 & 250 & 0.9960 \\
+\hline
+\end{tabular}\\[0.5em]
+\subsection{Metric comparison across predictors}
+\begin{tabular}{l r r r r r r r r}
+\hline
+Predictor & Coverage & Avg size & Median & Singleton & Large & SSCV & CovGap & wUnder \\
+\hline
+QCTHR-G0 & 0.9916 & 43.240 & 38.0 & 0.0524 & 0.5984 & 0.0156 & 0.0036 & -0.0060 \\
+Orig-thr & 0.9908 & 41.490 & 35.0 & 0.0464 & 0.5828 & 0.0146 & 0.0032 & -0.0060 \\
+\hline
+\end{tabular}\\[0.5em]
+\textsf{\scriptsize SSCV = worst absolute coverage gap across prediction-set-size strata. CovGap = mean absolute deviation of difficulty-stratified coverage from the target $1-\alpha$. wUnder = worst difficulty-stratum under-coverage; values closer to zero are better.}\\
+\section{Interesting cases found Testing}
+\textbf{Cases filtered:} Interesting cases with large deviation for target probability 0.99
+
+
+\textbf{Parameter/Probability Combinations considered:}\begin{enumerate}
+\item Calibration Value: None with probability 0.9916
+\end{enumerate}
+        \end{document}
+        
