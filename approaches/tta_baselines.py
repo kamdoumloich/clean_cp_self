@@ -52,7 +52,8 @@ class _MixturePredictorBase:
                  scoring_function="aps", kreg=1, lamda=0.01,
                  n_leading_views=1, leading_views_mode="individual",
                  reference_view=0, leading_pool="arithmetic",
-                 leading_others_as_aug=False, aps_randomized=True,):
+                 leading_others_as_aug=False, aps_randomized=True,
+                 score_in_log_space=False):
 
         if inputs_type not in ("logits", "probs"):
             raise ValueError("inputs_type must be 'logits' or 'probs'.")
@@ -73,6 +74,7 @@ class _MixturePredictorBase:
         self.verbose = bool(verbose)
         self.path_logs = path_logs
         self.aps_randomized = bool(aps_randomized)
+        self.score_in_log_space = bool(score_in_log_space)
         self._rng = np.random.default_rng(self.seed)
         self.at_least_one_calibration = False
 
@@ -288,6 +290,13 @@ class _MixturePredictorBase:
             S = self._raps_all_scores(P2, kreg, lamda)
         else:
             raise RuntimeError(f"Unsupported score: {score}")
+
+        if getattr(self, "score_in_log_space", False):
+            # Transform to log-space nonconformity: s_log = -log(max(1.0 - S, EPS))
+            # For THR: S = 1 - P, so 1 - S = P and s_log = -log(P).
+            # For APS: S is cumulative sum in [0, 1], so s_log = -log(1 - s_aps).
+            S = -np.log(np.clip(1.0 - S, EPS, 1.0))
+
         return S[0] if one_d else S
 
     def _true_scores(self, Z, y, score=None, kreg=None, lamda=None, u=None, chunk=None):
@@ -308,14 +317,16 @@ class _MixturePredictorBase:
         return float(np.partition(sc, k - 1)[k - 1])
 
     @staticmethod
-    def _set_from_scores_predict_only(scores, tau, at_least_one=False):
+    def _set_from_scores_predict_only(scores, tau, at_least_one=False, score_in_log_space=False):
         assert len(scores.shape) == 1, "Error in function '_set_from_scores_predict_only'"
         s = np.asarray(scores, dtype=np.float64)
         K = s.shape[0]
         if tau is None:
             raise RuntimeError("No calibration value available.")
         tau = float(tau)
-        if tau >= 1.0:
+        if not score_in_log_space and tau >= 1.0:
+            return list(range(K)), None
+        if score_in_log_space and (np.isinf(tau) or tau >= -np.log(EPS)):
             return list(range(K)), None
         inc = np.flatnonzero(s <= tau)
         if inc.size == 0 and at_least_one:
@@ -379,7 +390,10 @@ class _MixturePredictorBase:
         z = self.compute_prob_dist(predictedLogitVector[0], list(predictedLogitVector[1:]))
         u = float(self._rng.uniform()) if (self.scoring_function == "aps" and self.aps_randomized) else 0.0
         sc = self._all_scores(z, score=self.scoring_function, u=u)
-        return self._set_from_scores_predict_only(sc, tau, at_least_one=self.at_least_one_calibration)
+        return self._set_from_scores_predict_only(
+            sc, tau, at_least_one=self.at_least_one_calibration,
+            score_in_log_space=getattr(self, "score_in_log_space", False)
+        )
 
 
 class TTAMeanPredictor(_MixturePredictorBase):
@@ -388,10 +402,12 @@ class TTAMeanPredictor(_MixturePredictorBase):
         self._maybe_tune_raps()
 
     def texInfo(self):
-        return f"TTA-Avg + {self.scoring_function.upper()}"
+        log_info = " (log-space)" if getattr(self, "score_in_log_space", False) else ""
+        return f"TTA-Avg + {self.scoring_function.upper()}{log_info}"
 
     def getShortName(self):
-        return f"TTA-Mean-{self.A}A-{self.scoring_function}"
+        log_tag = "-Log" if getattr(self, "score_in_log_space", False) else ""
+        return f"TTA-Mean-{self.A}A-{self.scoring_function}{log_tag}"
 
 
 class OriginalOnlyPredictor(_MixturePredictorBase):
@@ -405,10 +421,12 @@ class OriginalOnlyPredictor(_MixturePredictorBase):
         return self._pool_leading(V)
 
     def texInfo(self):
-        return f"No-TTA (leading views) + {self.scoring_function.upper()}"
+        log_info = " (log-space)" if getattr(self, "score_in_log_space", False) else ""
+        return f"No-TTA (leading views) + {self.scoring_function.upper()}{log_info}"
 
     def getShortName(self):
-        return f"Orig-{self.scoring_function}"
+        log_tag = "-Log" if getattr(self, "score_in_log_space", False) else ""
+        return f"Orig-{self.scoring_function}{log_tag}"
 
 
 class GlobalWeightPredictor(_MixturePredictorBase):
@@ -454,7 +472,9 @@ class GlobalWeightPredictor(_MixturePredictorBase):
         self._maybe_tune_raps()
 
     def texInfo(self):
-        return f"TTA-Learned + {self.scoring_function.upper()}"
+        log_info = " (log-space)" if getattr(self, "score_in_log_space", False) else ""
+        return f"TTA-Learned + {self.scoring_function.upper()}{log_info}"
 
     def getShortName(self):
-        return f"Global-w-{self.A}A-{self.scoring_function}"
+        log_tag = "-Log" if getattr(self, "score_in_log_space", False) else ""
+        return f"Global-w-{self.A}A-{self.scoring_function}{log_tag}"

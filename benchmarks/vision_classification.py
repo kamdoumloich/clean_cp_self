@@ -62,7 +62,7 @@ class VisionClassificationBenchmark:
         # self.num_workers = num_workers
         self.probability_batch_size = probability_batch_size
         self.pretrained = pretrained
-        expected_max_rotation=expected_max_rotation
+        self.expected_max_rotation = expected_max_rotation
         
 
         # self.benchmark_name = None
@@ -226,6 +226,7 @@ class VisionClassificationBenchmark:
             input_set=calibration_set,
             model=model,
             softmax_function=softmax,
+            split_name="calibration",
         )
 
         print("Loading of probability distributions (2/3)...")
@@ -233,6 +234,7 @@ class VisionClassificationBenchmark:
             input_set=testing_set,
             model=model,
             softmax_function=softmax,
+            split_name="testing",
         )
 
         print("Loading of probability distributions (3/3)...")
@@ -240,6 +242,7 @@ class VisionClassificationBenchmark:
             input_set=precalibration_set,
             model=model,
             softmax_function=softmax,
+            split_name="precalibration",
         )
 
         for probDist, dataset in [(self.precalibration_data, 'Precalibration'), (self.calibration_data, 'Calibration'), (self.testing_data, 'Testing')]:
@@ -379,7 +382,20 @@ class VisionClassificationBenchmark:
 
         torch.save(model.state_dict(), self.path_saved_model)
                     
-    def _collect_probability_data(self, input_set, model, softmax_function,):
+    def _collect_probability_data(self, input_set, model, softmax_function, split_name=None):
+        cache_file = None
+        if split_name is not None and self.path_logs:
+            rot_tag = getattr(self, "expected_max_rotation", "none")
+            b_name = getattr(self, "benchmark_name", "data")
+            cache_file = os.path.join(
+                self.path_logs,
+                f"prob_cache_{b_name}_{split_name}_seed{self.seed}_rot{rot_tag}.npz"
+            )
+            if os.path.isfile(cache_file):
+                print(f"Loading cached probabilities from {cache_file}...", flush=True)
+                with np.load(cache_file) as cached:
+                    return cached["probabilities"], cached["targets"]
+
         loader = torch.utils.data.DataLoader(
             input_set,
             batch_size=self.probability_batch_size,
@@ -391,29 +407,39 @@ class VisionClassificationBenchmark:
         target_batches = []
 
         with torch.no_grad():
-
             for data, target in loader:
-                data = data.to(self.DEVICE, non_blocking=True,)
-
+                data = data.to(self.DEVICE, non_blocking=True)
                 batch_size = data.shape[0]
                 n_augmentations = len(self.list_augmentations)
 
                 aug_batches = []
                 for augmentation_name in self.list_augmentations:
-                    data_aug = self._apply_augmentation(data, augmentation_name=augmentation_name,)
+                    data_aug = self._apply_augmentation(data, augmentation_name=augmentation_name)
                     aug_batches.append(data_aug)
 
-                big_batch = torch.cat(aug_batches, dim=0, )
+                big_batch = torch.cat(aug_batches, dim=0)
 
-                outputs = softmax_function(model(self._prepare_model_inputs(big_batch)))
-                outputs = outputs.view(n_augmentations, batch_size,-1,)
+                # Process forward pass in sub-chunks of at most 512 images to keep RAM/VRAM minimal
+                chunk_size = 512
+                chunk_outputs = []
+                for c_start in range(0, len(big_batch), chunk_size):
+                    chunk_data = big_batch[c_start : c_start + chunk_size]
+                    chunk_out = softmax_function(model(self._prepare_model_inputs(chunk_data)))
+                    chunk_outputs.append(chunk_out)
+
+                outputs = torch.cat(chunk_outputs, dim=0)
+                outputs = outputs.view(n_augmentations, batch_size, -1)
 
                 probability_batches.append(outputs.cpu().numpy())
                 target_batches.append(target.cpu().numpy())
 
-        # Concatenate all batches along the sample dimension. to get (n_augmentations, batch_size_i, K)
-        probabilities = np.concatenate(probability_batches, axis=1,)
-        targets = np.concatenate(target_batches, axis=0,)
+        probabilities = np.concatenate(probability_batches, axis=1)
+        targets = np.concatenate(target_batches, axis=0)
+
+        if cache_file is not None:
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            np.savez_compressed(cache_file, probabilities=probabilities, targets=targets)
+            print(f"Saved probability cache to {cache_file}", flush=True)
 
         return probabilities, targets
 

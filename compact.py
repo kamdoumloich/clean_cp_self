@@ -273,7 +273,7 @@ def runCompleteEvaluation(texTargetFile,benchmark,conformanceApproaches,interest
 
                     s["n"] += 1
                     s["top1_correct"] += int(
-                        np.argmax(probabilities[0]) == classification
+                        np.argmax(these_probabilities[0]) == classification
                     )
                     s["covered"] += int(classification in classes)
                     s["sum_size"] += len(classes)
@@ -302,10 +302,8 @@ def runCompleteEvaluation(texTargetFile,benchmark,conformanceApproaches,interest
                 rec_sizes.append(s)
                 rec_covered.append(is_cov)
                 rec_ytrue.append(classification)
-                # _p_orig = probabilities[0]
-                # rec_difficulty.append(1.0 - float(max(_p_orig)))
                 
-                _p_orig = np.asarray(probabilities[0], dtype=np.float64)
+                _p_orig = np.asarray(these_probabilities[0], dtype=np.float64)
 
                 if predictor.inputs_type == "logits":
                     z = _p_orig - np.max(_p_orig)
@@ -343,23 +341,23 @@ def runCompleteEvaluation(texTargetFile,benchmark,conformanceApproaches,interest
             outFile.write(" | ".join(map(str, n_set_of_size.tolist())))
             outFile.write("\\\\\n")
             
-            print("\n=== Per-cell diagnostics ===")
+            # print("\n=== Per-cell diagnostics ===")
 
-            for c in sorted(cell_stats):
-                s = cell_stats[c]
-                scores = np.asarray(s["true_scores"])
+            # for c in sorted(cell_stats):
+            #     s = cell_stats[c]
+            #     scores = np.asarray(s["true_scores"])
 
-                print(
-                    f"Cell {c}: "
-                    f"n={s['n']}, "
-                    f"qhat={s['qhat']:.6f}, "
-                    f"top1_acc={s['top1_correct']/s['n']:.4f}, "
-                    f"coverage={s['covered']/s['n']:.4f}, "
-                    f"avg_size={s['sum_size']/s['n']:.3f}, "
-                    f"score_median={np.median(scores):.6f}, "
-                    f"score_q90={np.quantile(scores, 0.90):.6f}, "
-                    f"score_q99={np.quantile(scores, 0.99):.6f}"
-                )
+            #     print(
+            #         f"Cell {c}: "
+            #         f"n={s['n']}, "
+            #         f"qhat={s['qhat']:.6f}, "
+            #         f"top1_acc={s['top1_correct']/s['n']:.4f}, "
+            #         f"coverage={s['covered']/s['n']:.4f}, "
+            #         f"avg_size={s['sum_size']/s['n']:.3f}, "
+            #         f"score_median={np.median(scores):.6f}, "
+            #         f"score_q90={np.quantile(scores, 0.90):.6f}, "
+            #         f"score_q99={np.quantile(scores, 0.99):.6f}"
+            #     )
 
             metrics = compute_all_metrics(
                 sizes=rec_sizes,

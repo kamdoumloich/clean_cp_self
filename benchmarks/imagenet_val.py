@@ -1,434 +1,300 @@
 """
-ImageNet-val benchmark for the conformance prediction framework.
+ImageNet-val benchmark for the conformal prediction framework.
 
 No training: a pretrained torchvision model (default ResNet-50,
 IMAGENET1K_V1) is evaluated on the 50k validation images. The 50k images
 are split DISJOINTLY into pre-calibration / calibration / test via a single
-seeded permutation (unlike VisionClassificationBenchmark, which draws
-independent splits from train and test sets; reusing that logic on a single
-set would let precal overlap cal/test).
+seeded permutation.
 
 Preprocessing order (correctness-critical):
-#   dataset transform = Resize(256) -> CenterCrop(224) -> ToTensor()  ([0,1])
-  augmentations (contrast, hflip, ...) are applied on the [0,1] tensors,
-  ImageNet mean/std NORMALIZATION IS APPLIED AFTER THE AUGMENTATION, just
-  before the model. Normalizing first would silently corrupt adjust_contrast
-  and violate the [0,1] assumption of adjust_hue.
+  1. Base transforms: Resize(256) -> CenterCrop(224) -> ToTensor() ([0, 1])
+  2. Augmentations (rotation, flip, etc.) applied on [0, 1] tensors
+  3. ImageNet normalization (mean/std) applied AFTER augmentation, directly before model.
 
-Probability cache:
-  Augmentations are deterministic, so the (View, 50000, 1000) softmax outputs
-  are seed-INdependent. They are computed once and cached as a float32 .npz
-  (~600 MB for 3 views) under <cache_dir>; every seed then only re-indexes
-  the cache. Run seeds SEQUENTIALLY the first time (concurrent first runs
-  would race on the cache build; the write itself is atomic via os.replace,
-  so the race wastes compute but cannot corrupt the file).
-
+Cache Architecture:
+  Augmentations are deterministic, so the (50000, 1000) logit outputs are
+  seed-independent. They are cached as float32 .npz files per augmentation view
+  under <cache_dir>. Loading uses memory-mapped slices directly into the disjoint
+  splits, preventing multi-gigabyte memory duplication.
 """
 
 import json
 import os
-
-from utils.function_utils import UtilsDataset
-from utils.function_utils import UtilsGeneral
-from utils.function_utils import UtilsAugmentations
-from torchvision.models import ResNet50_Weights
-
-import utils.tta_policies
+from typing import Dict, List, Optional, Tuple, Any
 
 import numpy as np
+import torch
+import torchvision
+from torchvision.models import ResNet50_Weights
+
+from utils.function_utils import UtilsAugmentations, UtilsDataset, UtilsGeneral
+import utils.tta_policies
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 class ImageNetValBenchmark:
-
     benchmark_name = "ImageNet-val"
 
-    def __init__(self, augmentations, path_logs, 
-                 imagenet_root='/scratch/lkd18/data/imagenet', 
-                 seed=42,
-                 precalibration_fraction=0.3, 
-                 calibration_fraction=0.3, 
-                 test_fraction=0.4,
-                 arch="resnet50", weights="IMAGENET1K_V1",
-                 batch_size=128, 
-                #  num_workers=4, 
-                 cache_dir='/scratch/lkd18/data/imagenet/cache',
-                 ):
-        '''
-        type_policy is either 'tta_policy' or 'custom_policy'
-        '''
-        
-        if precalibration_fraction + calibration_fraction + test_fraction > 1.0 + 1e-9:
-            raise ValueError("precal + cal + test fractions must be <= 1.")
+    def __init__(
+        self,
+        policy_name: Optional[str] = "original_only_policy",
+        path_logs: Optional[str] = None,
+        list_other_aug: Optional[Dict[str, Any]] = None,
+        augmentations: Optional[Dict[str, Any]] = None,
+        imagenet_root: str = "/scratch/lkd18/data/imagenet",
+        seed: int = 42,
+        precalibration_fraction: float = 0.1,
+        calibration_fraction: float = 0.5,
+        test_fraction: float = 0.4,
+        arch: str = "resnet50",
+        weights: str = "IMAGENET1K_V1",
+        batch_size: int = 128,
+        cache_dir: str = "/scratch/lkd18/data/imagenet/cache",
+        expected_max_rotation: Optional[int] = None,
+    ):
+        # Support legacy signature where augmentations dictionary was passed first
+        if isinstance(policy_name, dict):
+            augmentations = policy_name
+            policy_name = None
 
-        self.augmentations = dict(augmentations)
-        self.list_augmentations_keys = list(self.augmentations.keys())
-        if not self.list_augmentations_keys or self.list_augmentations_keys[0] != "ORIGINAL":
-            raise ValueError("augmentations must start with 'ORIGINAL'.")
+        if precalibration_fraction + calibration_fraction + test_fraction > 1.0 + 1e-9:
+            raise ValueError("precal + cal + test fractions must sum to <= 1.0.")
+
+        resolved_augmentations = {}
+        if policy_name is not None:
+            resolved_augmentations.update(
+                utils.tta_policies.build_augs_dict(policy=policy_name)
+            )
+        if augmentations is not None:
+            resolved_augmentations.update(augmentations)
+        if list_other_aug is not None:
+            resolved_augmentations.update(list_other_aug)
+
+        self.augmentations = resolved_augmentations
+        self.list_augmentation_names = list(self.augmentations.keys())
+        self.list_augmentations_keys = self.list_augmentation_names
+
+        if not self.list_augmentation_names or self.list_augmentation_names[0] != "ORIGINAL":
+            raise ValueError("Augmentations must start with 'ORIGINAL'.")
+
+        self.expected_max_rotation = expected_max_rotation
+        if expected_max_rotation is not None:
+            self._validate_rotation_view_order(expected_max_rotation)
 
         self.seed = int(seed)
         self.rng = np.random.default_rng(seed=seed)
-        self.path_logs = path_logs
+        self.path_logs = path_logs or "./logs/imagenetVal"
         self.imagenet_root = imagenet_root
         self.arch = str(arch)
-        # self.weights = str(weights)
         self.batch_size = int(batch_size)
-        # self.num_workers = int(num_workers)
         self.precal_fraction = float(precalibration_fraction)
         self.cal_fraction = float(calibration_fraction)
         self.test_fraction = float(test_fraction)
-        
-        # self.cache_path_1 = "/scratch/lkd18/data/imagenet/cache/logits_resnet50_ResNet50_Weights.IMAGENET1K_V1_16f851f0346ab6e5.npz"
-        # self.cache_path_2 = "/scratch/lkd18/data/imagenet/cache/logits_resnet50_ResNet50_Weights.IMAGENET1K_V1_ae2f9f4a9715ba6f.npz"
-        # self.cache_path = "/scratch/lkd18/data/imagenet/cache/cache_merged.npz"
-        
-        # https://docs.pytorch.org/vision/stable/models.html?highlight=randint
+
         if weights == "IMAGENET1K_V1":
-            # self.preprocess_transform = ResNet50_Weights.IMAGENET1K_V1.transforms()
             self.weights = ResNet50_Weights.IMAGENET1K_V1
+        elif isinstance(weights, ResNet50_Weights):
+            self.weights = weights
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"Unsupported weights: {weights}")
 
         os.makedirs(self.path_logs, exist_ok=True)
-        if cache_dir is None:
-            cache_dir = os.path.join(
-                os.path.dirname(os.path.normpath(self.path_logs)),
-                "imagenet_prob_cache")
-        self.cache_dir = cache_dir
+        self.cache_dir = cache_dir or os.path.join(
+            os.path.dirname(os.path.normpath(self.path_logs)), "imagenet_prob_cache"
+        )
         os.makedirs(self.cache_dir, exist_ok=True)
 
-
-        ##############################################
-        ############## VERY IMPORTANT ################
-        aug_spec = "_".join(f"{k}{v}" for k, v in self.augmentations.items())
-
-        hash_of_dict = UtilsGeneral.hash_dict(d=self.augmentations)
-        path_to_descrition_file = os.path.join(
-            self.cache_dir, f"description_{self.arch}_{self.weights}_{hash_of_dict}.txt")
-
-        UtilsGeneral.write_string_to_file(content=aug_spec, path=path_to_descrition_file)
-
-        ##############################################
-
-
+        # Base cache template for per-augmentation .npz files
         self.cache_path = os.path.join(
-            self.cache_dir, f"logits_{self.arch}_{self.weights}_{hash_of_dict}.npz")
+            self.cache_dir, f"logits_{self.arch}_{self.weights}_.npz"
+        )
 
-        logits, labels, self.classes = self._load_or_build_cache()
-        V, N, K = logits.shape
+        # Load data directly into disjoint splits
+        self._load_and_build_splits()
+
+    def _validate_rotation_view_order(self, max_rotation: int) -> np.ndarray:
+        """Verify that rotation probes match [-max_rot..-1, 1..max_rot] in exact order."""
+        expected_angles = list(range(-max_rotation, 0)) + list(range(1, max_rotation + 1))
+        actual_angles = []
+
+        for name in self.list_augmentation_names[1:]:
+            if not str(name).startswith("ROTATE_PROBE_"):
+                continue
+            spec = self.augmentations[name]
+            deg = float(spec["degree"])
+            if not deg.is_integer():
+                raise ValueError(f"Rotation degree must be an integer, got {deg}.")
+            actual_angles.append(int(deg))
+
+        if len(actual_angles) == len(expected_angles) and actual_angles != expected_angles:
+            raise ValueError(
+                f"Incorrect rotation-view order.\n"
+                f"Expected: {expected_angles}\n"
+                f"Received: {actual_angles}"
+            )
+        return np.asarray([0] + actual_angles, dtype=np.int64)
+
+    def _get_cache_path_for_aug(self, aug_name: str) -> str:
+        """Finds the cache file path for a given augmentation, checking common float/int formats."""
+        root, ext = os.path.splitext(self.cache_path)
+        safe_aug = str(aug_name).replace("/", "_").replace("\\", "_")
+        cand1 = f"{root}.{safe_aug}{ext}"
+        if os.path.isfile(cand1):
+            return cand1
+
+        # Check alternative formats (e.g. without trailing underscore in root, or .0 on degrees)
+        root_no_under = root.rstrip("_")
+        cand2 = f"{root_no_under}_{safe_aug}{ext}"
+        if os.path.isfile(cand2):
+            return cand2
+
+        if safe_aug.startswith("ROTATE_PROBE_"):
+            deg_str = safe_aug.replace("ROTATE_PROBE_", "")
+            try:
+                deg_f = float(deg_str)
+                # Try with .0
+                alt_aug = f"ROTATE_PROBE_{deg_f:.1f}"
+                cand3 = f"{root}.{alt_aug}{ext}"
+                if os.path.isfile(cand3):
+                    return cand3
+                # Try without .0
+                alt_aug_int = f"ROTATE_PROBE_{int(deg_f)}"
+                cand4 = f"{root}.{alt_aug_int}{ext}"
+                if os.path.isfile(cand4):
+                    return cand4
+            except ValueError:
+                pass
+
+        return cand1
+
+    def _load_and_build_splits(self):
+        """Loads logits per view directly into disjoint precal, cal, and test splits."""
+        missing_augs = []
+        cache_paths = {}
+
+        for aug_name in self.list_augmentation_names:
+            path = self._get_cache_path_for_aug(aug_name)
+            if not os.path.isfile(path):
+                missing_augs.append(aug_name)
+            else:
+                cache_paths[aug_name] = path
+
+        if missing_augs:
+            print(
+                f"[imagenet] missing caches for {len(missing_augs)} view(s): {missing_augs[:5]}... "
+                "Running forward pass over validation set.",
+                flush=True,
+            )
+            self._generate_missing_caches(missing_augs)
+            for aug_name in missing_augs:
+                cache_paths[aug_name] = self._get_cache_path_for_aug(aug_name)
+
+        # Inspect first view to determine sample count N, class count K, and labels
+        first_aug = self.list_augmentation_names[0]
+        first_path = cache_paths[first_aug]
+        first_classes_path = first_path + ".classes.json"
+
+        with np.load(first_path, mmap_mode="r") as z:
+            first_logits = z["logits"]
+            labels = np.asarray(z["labels"], dtype=np.int64)
+
+        if first_logits.ndim == 2:
+            first_logits = first_logits[None, :, :]
+        _, N, K = first_logits.shape
         self.n_classes = int(K)
 
+        if os.path.isfile(first_classes_path):
+            with open(first_classes_path, "r", encoding="utf-8") as f:
+                self.classes = tuple(json.load(f))
+        else:
+            self.classes = tuple(str(i) for i in range(K))
+
+        # Generate disjoint split indices
         idx_cal, idx_test, idx_pre = UtilsDataset.generate_three_disjoint_split_idx(
-            n_total=N, cal_fraction=self.cal_fraction, test_fraction=self.test_fraction,
-            precal_fraction=self.precal_fraction, seed=self.seed,
-            )
-        
-        print(f"[imagenet] split sizes: precal={len(idx_pre)}, "
-              f"cal={len(idx_cal)}, test={len(idx_test)} (of {N})",
-              flush=True)
+            n_total=N,
+            cal_fraction=self.cal_fraction,
+            test_fraction=self.test_fraction,
+            precal_fraction=self.precal_fraction,
+            seed=self.seed,
+        )
 
-        self.precalibration_data = self._get_entries_by_idx(logits, labels, idx_pre)
-        self.calibration_data = self._get_entries_by_idx(logits, labels, idx_cal)
-        self.testing_data = self._get_entries_by_idx(logits, labels, idx_test)
+        print(
+            f"[imagenet] split sizes: precal={len(idx_pre)}, "
+            f"cal={len(idx_cal)}, test={len(idx_test)} (of {N})",
+            flush=True,
+        )
 
-        # # per-view top-1 accuracy on the test split (no training happens)
-        # self.accuracies = {"Training": [], "Testing": []}
-        # self.class_accuracies = {"Training": {}, "Testing": {}}
-        # for v, aug_name in enumerate(self.list_augmentations_keys):
-        #     acc = float((logits[v, idx_test].argmax(axis=1) == labels[idx_test]).mean() * 100.0)
-        #     self.accuracies["Testing"].append(round(acc, 2))
-        #     print(f"[imagenet] top-1 accuracy on test split ({aug_name}): {acc:.2f}%", flush=True)
+        V = len(self.list_augmentation_names)
+        pre_views = []
+        cal_views = []
+        test_views = []
 
-    def _can_evaluate_without_training(self):
-        return True
+        # Load each view with mmap and slice directly to avoid 140+ GB memory copies
+        for aug_name in self.list_augmentation_names:
+            aug_path = cache_paths[aug_name]
+            with np.load(aug_path, mmap_mode="r") as z:
+                aug_logits = z["logits"]
+                if aug_logits.ndim == 2:
+                    aug_logits = aug_logits[None, :, :]
+                pre_views.append(np.array(aug_logits[0, idx_pre, :], dtype=np.float32))
+                cal_views.append(np.array(aug_logits[0, idx_cal, :], dtype=np.float32))
+                test_views.append(np.array(aug_logits[0, idx_test, :], dtype=np.float32))
 
+        pre_arr = np.stack(pre_views, axis=0)
+        cal_arr = np.stack(cal_views, axis=0)
+        test_arr = np.stack(test_views, axis=0)
 
-    @staticmethod
-    def _get_entries_by_idx(logits, labels, idx):
-        V = logits.shape[0]
-        return [([logits[v, i] for v in range(V)], int(labels[i])) for i in idx]
+        self.precalibration_data = (pre_arr, labels[idx_pre])
+        self.calibration_data = (cal_arr, labels[idx_cal])
+        self.testing_data = (test_arr, labels[idx_test])
 
-    # ------------------------- cache build / load -------------------------
-    
-    # def _load_cache_file(self, cache_path):
-    #     classes_path = cache_path + ".classes.json"
+        # Record accuracies
+        self.accuracies = {"Training": [], "Testing": []}
+        self.class_accuracies = {"Training": {}, "Testing": {}}
 
-    #     if not os.path.isfile(cache_path):
-    #         raise FileNotFoundError(f"Cache file not found: {cache_path}")
+        acc_orig = float((test_arr[0].argmax(axis=1) == labels[idx_test]).mean() * 100.0)
+        self.accuracies["Testing"].append(round(acc_orig, 2))
+        print(f"[imagenet] top-1 accuracy on test split (ORIGINAL): {acc_orig:.2f}%", flush=True)
 
-    #     with np.load(cache_path, allow_pickle=False) as z:
-    #         logits = z["logits"]
-    #         labels = z["labels"]
-    #         augs = [str(a) for a in z["augs"]]
-
-    #     classes = (
-    #         tuple(json.load(open(classes_path, "r", encoding="utf-8")))
-    #         if os.path.isfile(classes_path)
-    #         else tuple(str(i) for i in range(logits.shape[2]))
-    #     )
-
-    #     return {
-    #         "logits": logits,
-    #         "labels": labels,
-    #         "augs": augs,
-    #         "classes": classes,
-    #     }
-
-
-    # def _merge_two_caches(self, cache_path_1, cache_path_2, output_path):
-    #     cache_1 = self._load_cache_file(cache_path_1)
-    #     cache_2 = self._load_cache_file(cache_path_2)
-        
-    #     from utils.function_utils import Augmentation
-        
-        
-        
-    #     list_rotation_360 = UtilsAugmentations.get_n_evenly_spaced_values_for_augmentation(augmentation_name=Augmentation.ROTATE, lb_degree_aug=-10, ub_degree_aug=10, n_amount=21)
-
-    #     dict_aug = {
-    #         "ORIGINAL": [0],
-    #         # "RANDOM_CROP": [4],
-    #         # "HORIZONTAL_FLIP": [True],
-    #         # "ROTATE": list_rotation_360,
-    #     }
-        
-    #     for degree in list_rotation_360:
-    #         string = "ROTATE_"+str(degree)
-    #         dict_aug[string] =  [degree]
-            
-    #     augs_2 = dict_aug
-
-    #     logits_1 = cache_1["logits"]
-    #     logits_2 = cache_2["logits"]
-
-    #     labels_1 = cache_1["labels"]
-    #     labels_2 = cache_2["labels"]
-
-    #     augs_1 = cache_1["augs"]
-    #     # augs_2 = cache_2["augs"]
-
-    #     classes_1 = cache_1["classes"]
-    #     classes_2 = cache_2["classes"]
-
-    #     if logits_1.ndim != 3 or logits_2.ndim != 3:
-    #         raise ValueError(
-    #             f"Expected logits with shape (V, N, K), got "
-    #             f"{logits_1.shape} and {logits_2.shape}."
-    #         )
-
-    #     if logits_1.shape[1:] != logits_2.shape[1:]:
-    #         raise ValueError(
-    #             f"Cannot merge caches with different (N, K): "
-    #             f"{logits_1.shape[1:]} vs {logits_2.shape[1:]}."
-    #         )
-
-    #     if not np.array_equal(labels_1, labels_2):
-    #         raise ValueError("Cannot merge caches: labels are different.")
-
-    #     if classes_1 != classes_2:
-    #         raise ValueError("Cannot merge caches: classes are different.")
-
-    #     if len(augs_1) != logits_1.shape[0]:
-    #         raise ValueError(
-    #             f"Cache 1 has {len(augs_1)} augmentation names but "
-    #             f"{logits_1.shape[0]} logit views."
-    #         )
-
-    #     if len(augs_2) != logits_2.shape[0]:
-    #         raise ValueError(
-    #             f"Cache 2 has {len(augs_2)} augmentation names but "
-    #             f"{logits_2.shape[0]} logit views."
-    #         )
-
-    #     merged_logits = [logits_1[i] for i in range(len(augs_1))]
-    #     merged_augs = list(augs_1)
-
-    #     seen = set(merged_augs)
-
-    #     skipped = []
-    #     added = []
-
-    #     for i, aug_name in enumerate(augs_2):
-    #         if aug_name in seen:
-    #             skipped.append(aug_name)
-    #             continue
-
-    #         merged_logits.append(logits_2[i])
-    #         merged_augs.append(aug_name)
-    #         seen.add(aug_name)
-    #         added.append(aug_name)
-
-    #     merged_logits = np.stack(merged_logits, axis=0)
-
-    #     tmp = output_path + ".tmp"
-
-    #     with open(tmp, "wb") as f:
-    #         np.savez(
-    #             f,
-    #             logits=merged_logits,
-    #             labels=labels_1,
-    #             augs=np.array(merged_augs),
-    #         )
-
-    #     os.replace(tmp, output_path)
-
-    #     output_classes_path = output_path + ".classes.json"
-    #     with open(output_classes_path, "w", encoding="utf-8") as f:
-    #         json.dump(list(classes_1), f)
-
-    #     print(
-    #         f"[imagenet] merged cache written to {output_path} "
-    #         f"({os.path.getsize(output_path) / 1e9:.2f} GB)",
-    #         flush=True,
-    #     )
-    #     print(f"[imagenet] added views: {added}", flush=True)
-    #     print(f"[imagenet] skipped duplicate views: {skipped}", flush=True)
-
-    #     return merged_logits, labels_1, classes_1
-    
-    
-    # def _load_or_build_cache(self):
-    #     classes_path = self.cache_path + ".classes.json"
-
-    #     if hasattr(self, "cache_path_1") and hasattr(self, "cache_path_2"):
-    #         if os.path.isfile(self.cache_path):
-    #             print(f"[imagenet] loading merged cache {self.cache_path}", flush=True)
-
-    #             with np.load(self.cache_path, allow_pickle=False) as z:
-    #                 logits = z["logits"]
-    #                 labels = z["labels"]
-    #                 cached_augs = [str(a) for a in z["augs"]]
-
-    #             classes = (
-    #                 tuple(json.load(open(classes_path, "r", encoding="utf-8")))
-    #                 if os.path.isfile(classes_path)
-    #                 else tuple(str(i) for i in range(logits.shape[2]))
-    #             )
-
-    #             return logits, labels, classes
-
-    #         return self._merge_two_caches(
-    #             cache_path_1=self.cache_path_1,
-    #             cache_path_2=self.cache_path_2,
-    #             output_path=self.cache_path,
-    #         )
-
-    #     if os.path.isfile(self.cache_path):
-    #         print(f"[imagenet] loading probability cache {self.cache_path}", flush=True)
-
-    #         with np.load(self.cache_path, allow_pickle=False) as z:
-    #             logits = z["logits"]
-    #             labels = z["labels"]
-    #             cached_augs = [str(a) for a in z["augs"]]
-
-    #         if cached_augs != self.list_augmentations:
-    #             raise ValueError(
-    #                 f"Cache {self.cache_path} was built for views "
-    #                 f"{cached_augs}, requested {self.list_augmentations}. "
-    #                 "Delete the cache or change the augmentation dict."
-    #             )
-
-    #         classes = (
-    #             tuple(json.load(open(classes_path, "r", encoding="utf-8")))
-    #             if os.path.isfile(classes_path)
-    #             else tuple(str(i) for i in range(logits.shape[2]))
-    #         )
-
-    #         return logits, labels, classes
-
-    #     print(
-    #         "[imagenet] probability cache not found; running one full "
-    #         "forward pass over val.",
-    #         flush=True,
-    #     )
-
-    #     logits, labels, classes = self._forward_full_val()
-
-    #     tmp = self.cache_path + ".tmp"
-
-    #     with open(tmp, "wb") as f:
-    #         np.savez(
-    #             f,
-    #             logits=logits,
-    #             labels=labels,
-    #             augs=np.array(self.list_augmentations),
-    #         )
-
-    #     os.replace(tmp, self.cache_path)
-
-    #     with open(classes_path, "w", encoding="utf-8") as f:
-    #         json.dump(list(classes), f)
-
-    #     print(
-    #         f"[imagenet] cache written to {self.cache_path} "
-    #         f"({os.path.getsize(self.cache_path) / 1e9:.2f} GB)",
-    #         flush=True,
-    #     )
-
-    #     return logits, labels, classes
-    
-    
-    #*****************************************************************************
-
-    def _load_or_build_cache(self):
-        classes_path = self.cache_path + ".classes.json"
-        if os.path.isfile(self.cache_path):
-            print(f"[imagenet] loading probability cache {self.cache_path}",
-                  flush=True)
-            with np.load(self.cache_path) as z:
-                logits = z["logits"]
-                labels = z["labels"]
-                cached_augs = [str(a) for a in z["augs"]]
-            if cached_augs != self.list_augmentations_keys:
-                raise ValueError(
-                    f"Cache {self.cache_path} was built for views "
-                    f"{cached_augs}, requested {self.list_augmentations_keys}. "
-                    "Delete the cache or change the augmentation dict.")
-            classes = tuple(json.load(open(classes_path, "r",
-                                           encoding="utf-8"))) \
-                if os.path.isfile(classes_path) else tuple(
-                    str(i) for i in range(logits.shape[2]))
-            return logits, labels, classes
-
-        print("[imagenet] probability cache not found; running one full "
-              "forward pass over val (this is the expensive step and is "
-              "done ONCE across all seeds).", flush=True)
-        logits, labels, classes = self._forward_full_val()
-        tmp = self.cache_path + ".tmp"
-        with open(tmp, "wb") as f:
-            np.savez(f, logits=logits, labels=labels,
-                     augs=np.array(self.list_augmentations_keys))
-        os.replace(tmp, self.cache_path)
-        with open(classes_path, "w", encoding="utf-8") as f:
-            json.dump(list(classes), f)
-        print(f"[imagenet] cache written to {self.cache_path} "
-              f"({os.path.getsize(self.cache_path) / 1e9:.2f} GB)",
-              flush=True)
-        return logits, labels, classes
-
-    def _forward_full_val(self):
-        import torch
-        import torchvision
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        try:
-            transform = torchvision.transforms.Compose([
-                    torchvision.transforms.Resize(256, interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-                    torchvision.transforms.CenterCrop(224),
-                    torchvision.transforms.ToTensor(),
-            ])
-            val_dataset = torchvision.datasets.ImageNet(
-                root=self.imagenet_root, split="val", 
-                transform=transform
+        # Log brief summary instead of printing 359 lines
+        if V > 1:
+            all_accs = [
+                float((test_arr[v].argmax(axis=1) == labels[idx_test]).mean() * 100.0)
+                for v in range(V)
+            ]
+            self.accuracies["Testing"] = [round(a, 2) for a in all_accs]
+            if V <= 10:
+                for v in range(1, V):
+                    print(
+                        f"[imagenet] top-1 accuracy on test split ({self.list_augmentation_names[v]}): {all_accs[v]:.2f}%",
+                        flush=True,
+                    )
+            else:
+                rot_accs = all_accs[1:]
+                print(
+                    f"[imagenet] {V - 1} rotation probe views loaded: "
+                    f"test accuracy range [{min(rot_accs):.2f}% .. {max(rot_accs):.2f}%] (mean {np.mean(rot_accs):.2f}%)",
+                    flush=True,
                 )
+
+    def _generate_missing_caches(self, missing_augs: List[str]):
+        """Generates missing views one by one or in safe sub-batches to prevent CUDA OOM."""
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        transform = torchvision.transforms.Compose([
+            torchvision.transforms.Resize(256, interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
+            torchvision.transforms.CenterCrop(224),
+            torchvision.transforms.ToTensor(),
+        ])
+
+        try:
+            val_dataset = torchvision.datasets.ImageNet(
+                root=self.imagenet_root, split="val", transform=transform
+            )
         except Exception as exc:
             raise RuntimeError(
-                f"Could not open ImageNet val at {self.imagenet_root}. Run "
-                "prepare_data.py --imagenet_root <path> first (the val tar "
-                "must be downloaded manually from image-net.org)."
+                f"Could not open ImageNet val at {self.imagenet_root}. Ensure ImageNet validation set is prepared."
             ) from exc
 
         classes = self._normalize_classes(val_dataset.classes)
@@ -436,53 +302,56 @@ class ImageNetValBenchmark:
         model.eval()
 
         loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=self.batch_size, shuffle=False,
-            # num_workers=self.num_workers, 
-            pin_memory=(device == "cuda"))
+            val_dataset, batch_size=self.batch_size, shuffle=False, pin_memory=(device == "cuda")
+        )
 
-        view_specs = [
-            (aug_name, aug_degree)
-            for aug_name in self.list_augmentations_keys
-            for aug_degree in self.augmentations[aug_name]
-        ]
-        V = len(view_specs)
         N = len(val_dataset)
-        logits = None
         labels = np.empty(N, dtype=np.int64)
-        pos = 0
 
-        with torch.no_grad():
-            for data, target in loader:
-                data = data.to(device, non_blocking=True)
-                B = data.shape[0]
+        for aug_name in missing_augs:
+            print(f"[imagenet] computing forward pass for missing view '{aug_name}'...", flush=True)
+            aug_cache_path = self._get_cache_path_for_aug(aug_name)
+            classes_path = aug_cache_path + ".classes.json"
+            view_logits = np.empty((1, N, 1000), dtype=np.float32)
+            pos = 0
 
-                for v, (aug_name, aug_degree) in enumerate(view_specs):
-                    view = UtilsAugmentations.apply_single_augmentation(
-                        data, name=aug_name, rng=self.seed, degree=aug_degree,
-                    )
-                    out = model(self._prepare_model_inputs(view))       # [B, K]
-                    out = out.cpu().numpy().astype(np.float32)
-                    if logits is None:
-                        logits = np.empty((V, N, out.shape[1]), dtype=np.float32)
-                    logits[v, pos:pos + B] = out
+            with torch.no_grad():
+                for data, target in loader:
+                    data = data.to(device, non_blocking=True)
+                    B = data.shape[0]
 
-                labels[pos:pos + B] = target.numpy()
-                pos += B
-                if (pos // self.batch_size) % 20 == 0:
-                    print(f"[imagenet] forward {pos}/{N}", flush=True)
-        assert pos == N
-        return logits, labels, classes
+                    if aug_name == "ORIGINAL":
+                        view = data
+                    elif aug_name.startswith("ROTATE_PROBE_"):
+                        deg = float(self.augmentations[aug_name]["degree"])
+                        view = UtilsAugmentations.apply_single_augmentation(
+                            data, "ROTATE", rng=None, degree=deg
+                        )
+                    else:
+                        view = utils.tta_policies.apply_tta_aug_policy(data, augmentation_name=aug_name)
 
-    # --------------------- preprocessing & augmentation ---------------------
+                    out = model(self._prepare_model_inputs(view))
+                    view_logits[0, pos : pos + B] = out.cpu().numpy().astype(np.float32)
+                    labels[pos : pos + B] = target.numpy()
+                    pos += B
 
-    # @staticmethod
-    def _prepare_model_inputs(self, data):
-        import torchvision
-        return torchvision.transforms.functional.normalize(data, mean=list(IMAGENET_MEAN), std=list(IMAGENET_STD))
+            assert pos == N
+            tmp = aug_cache_path + ".tmp"
+            with open(tmp, "wb") as f:
+                np.savez(f, logits=view_logits, labels=labels, aug=np.array(str(aug_name)))
+            os.replace(tmp, aug_cache_path)
 
+            with open(classes_path, "w", encoding="utf-8") as f:
+                json.dump(list(classes), f)
+            print(f"[imagenet] wrote cache: {aug_cache_path}", flush=True)
+
+    def _prepare_model_inputs(self, data: torch.Tensor) -> torch.Tensor:
+        return torchvision.transforms.functional.normalize(
+            data, mean=list(IMAGENET_MEAN), std=list(IMAGENET_STD)
+        )
 
     @staticmethod
-    def _normalize_classes(classes):
+    def _normalize_classes(classes) -> Tuple[str, ...]:
         out = []
         for c in classes:
             if isinstance(c, (tuple, list)):
@@ -491,20 +360,17 @@ class ImageNetValBenchmark:
                 out.append(str(c))
         return tuple(out)
 
-    # ------------------------------ reporting ------------------------------
+    def _can_evaluate_without_training(self) -> bool:
+        return True
 
-    def texInfo(self):
-        accs = " / ".join(
-            f"{name}: {acc}\\%" for name, acc in
-            zip(self.list_augmentations_keys, self.accuracies["Testing"]))
-        return ("""
-        \\begin{tabular}{l|l} \\
-        \\textbf{Benchmark name:} & ImageNet-val \\\\ \\hline
-        \\textbf{Model:} & """ + f"{self.arch} ({self.weights}, pretrained, "
-                "no training)" + """ \\\\ \\hline
-        \\textbf{Augmentations:} & """ +
-                str(list(self.augmentations.values())) + """ \\\\ \\hline
-        \\textbf{Top-1 accuracy (test split):} & """ + accs + """ \\
-        \\end{tabular}
+    def texInfo(self) -> str:
+        acc_orig = self.accuracies["Testing"][0] if self.accuracies["Testing"] else "N/A"
+        return f"""
+        \\begin{{tabular}}{{l|l}} \\
+        \\textbf{{Benchmark name:}} & ImageNet-val \\\\ \\hline
+        \\textbf{{Model:}} & {self.arch} ({self.weights}, pretrained, no training) \\\\ \\hline
+        \\textbf{{Number of views:}} & {len(self.list_augmentation_names)} \\\\ \\hline
+        \\textbf{{Top-1 accuracy (test split, ORIGINAL):}} & {acc_orig}\\% \\\\
+        \\end{{tabular}}
         (Per-class tables omitted: 1000 classes.)
-        """)
+        """
