@@ -1,0 +1,197 @@
+# Output of scratch/routing_information_diagnostic.py (CIFAR-10, ResNet-18 cpu checkpoint, seed 2026, precalibration+calibration pooled, N=5000)
+# Data caveat: images come from the fast.ai PNG copy of CIFAR-10 (torchvision's host was unreachable), so sample order, and hence split membership, differs from runs on the official test_batch.
+# Command: python3 scratch/routing_information_diagnostic.py --cache_dir <dir> --n_repeats 3 --n_boot 500 --n_perm 100 --routes <route>
+
+################ symmetric
+Loading caches
+  loaded /tmp/claude-0/-home-user-clean-cp-self/cafddae7-0d3a-5386-bcac-a713100a89e3/scratchpad/cache/prob_cache_CIFAR10_precalibration_seed2026_rot179.npz  views/N/K = (359, 1000, 10)
+  loaded /tmp/claude-0/-home-user-clean-cp-self/cafddae7-0d3a-5386-bcac-a713100a89e3/scratchpad/cache/prob_cache_CIFAR10_calibration_seed2026_rot179.npz  views/N/K = (359, 4000, 10)
+  pooled N=5000  top-1 accuracy=0.8342  alpha=0.1
+  global THR q=0.9395 (miscoverage rate 0.100); global APS q=0.9200 (miscoverage rate 0.100)
+
+=== DESCRIPTIVE ===
+
+  [symmetric] Spearman(r, max-softmax) = +0.712   Spearman(r, top-1 error) = -0.376
+  top-1 error by quantile bin of r  (non-monotone => see the sequence):
+    r in [    1,     1]  n= 496  err=0.516  mean max-softmax=0.716
+    r in [    2,     3]  n=1193  err=0.277  mean max-softmax=0.912
+    r in [    4,     6]  n= 700  err=0.183  mean max-softmax=0.966
+    r in [    7,    10]  n= 692  err=0.066  mean max-softmax=0.988
+    r in [   11,    15]  n= 667  err=0.042  mean max-softmax=0.994
+    r in [   16,    22]  n= 625  err=0.040  mean max-softmax=0.995
+    r in [   23,   179]  n= 627  err=0.026  mean max-softmax=0.995
+  top-1 error, rows = confidence tercile (low->high), cols = r tercile (low->high):
+    0.466 (n=1019)   0.394 (n=541)   0.196 (n=107)
+    0.080 (n=250)   0.061 (n=919)   0.056 (n=497)
+    0.000 (n=25)   0.009 (n=577)   0.010 (n=1065)
+
+=== CROSS-VALIDATED INFORMATION TEST ===
+  5-fold CV x 3 repeats; bootstrap=500; permutations=100
+
+--- routing feature: symmetric  (distinct values: 105) ---
+
+  target = top1   (positive rate 0.166, n_pos=829)
+  model               AUROC    (sd)   logloss    (sd)
+  prior only         0.5000            0.4492
+  conf               0.8756  0.0002    0.3046  0.0001
+  route              0.7868  0.0007    0.3688  0.0002
+  conf+route         0.8747  0.0005    0.3050  0.0005
+  gbm-conf           0.8728  0.0003    0.3061  0.0000
+  gbm-conf+route     0.8732  0.0008    0.3058  0.0007
+  Δ(conf+route - conf):  AUROC 95% CI [-0.0028, +0.0012]   logloss reduction 95% CI [-0.00192, +0.00124]
+  Δ(gbm-conf+route - gbm-conf):  AUROC 95% CI [-0.0015, +0.0033]   logloss reduction 95% CI [-0.00144, +0.00262]
+  permutation test (route shuffled within confidence deciles, additive spline model): logloss reduction obs=-0.00013  null mean=-0.00077  p=0.109
+
+  target = thr   (positive rate 0.100, n_pos=499)
+  model               AUROC    (sd)   logloss    (sd)
+  prior only         0.5000            0.3246
+  conf               0.7988  0.0012    0.2682  0.0004
+  route              0.6847  0.0021    0.3003  0.0002
+  conf+route         0.7973  0.0021    0.2687  0.0006
+  gbm-conf           0.7984  0.0032    0.2687  0.0015
+  gbm-conf+route     0.7982  0.0046    0.2696  0.0020
+  Δ(conf+route - conf):  AUROC 95% CI [-0.0057, +0.0028]   logloss reduction 95% CI [-0.00191, +0.00101]
+  Δ(gbm-conf+route - gbm-conf):  AUROC 95% CI [-0.0051, +0.0057]   logloss reduction 95% CI [-0.00269, +0.00089]
+  permutation test (route shuffled within confidence deciles, additive spline model): logloss reduction obs=-0.00028  null mean=-0.00085  p=0.139
+
+  target = aps   (positive rate 0.100, n_pos=499)
+  model               AUROC    (sd)   logloss    (sd)
+  prior only         0.5000            0.3246
+  conf               0.8004  0.0004    0.2680  0.0001
+  route              0.6845  0.0030    0.3002  0.0003
+  conf+route         0.7988  0.0014    0.2684  0.0003
+  gbm-conf           0.7995  0.0012    0.2688  0.0003
+  gbm-conf+route     0.7974  0.0019    0.2695  0.0005
+  Δ(conf+route - conf):  AUROC 95% CI [-0.0053, +0.0032]   logloss reduction 95% CI [-0.00166, +0.00110]
+  Δ(gbm-conf+route - gbm-conf):  AUROC 95% CI [-0.0058, +0.0036]   logloss reduction 95% CI [-0.00255, +0.00100]
+  permutation test (route shuffled within confidence deciles, additive spline model): logloss reduction obs=-0.00044  null mean=-0.00071  p=0.277
+
+################ agreement
+Loading caches
+  loaded /tmp/claude-0/-home-user-clean-cp-self/cafddae7-0d3a-5386-bcac-a713100a89e3/scratchpad/cache/prob_cache_CIFAR10_precalibration_seed2026_rot179.npz  views/N/K = (359, 1000, 10)
+  loaded /tmp/claude-0/-home-user-clean-cp-self/cafddae7-0d3a-5386-bcac-a713100a89e3/scratchpad/cache/prob_cache_CIFAR10_calibration_seed2026_rot179.npz  views/N/K = (359, 4000, 10)
+  pooled N=5000  top-1 accuracy=0.8342  alpha=0.1
+  global THR q=0.9395 (miscoverage rate 0.100); global APS q=0.9200 (miscoverage rate 0.100)
+
+=== DESCRIPTIVE ===
+
+  [agreement] Spearman(r, max-softmax) = +0.217   Spearman(r, top-1 error) = -0.097
+  top-1 error by quantile bin of r  (non-monotone => see the sequence):
+    r in [    2,    28]  n= 606  err=0.314  mean max-softmax=0.868
+    r in [   29,    45]  n= 626  err=0.158  mean max-softmax=0.941
+    r in [   46,    63]  n= 629  err=0.141  mean max-softmax=0.956
+    r in [   64,    86]  n= 630  err=0.132  mean max-softmax=0.955
+    r in [   87,   118]  n= 624  err=0.139  mean max-softmax=0.954
+    r in [  119,   160]  n= 634  err=0.155  mean max-softmax=0.952
+    r in [  161,   218]  n= 626  err=0.176  mean max-softmax=0.947
+    r in [  219,   358]  n= 625  err=0.117  mean max-softmax=0.962
+  top-1 error, rows = confidence tercile (low->high), cols = r tercile (low->high):
+    0.439 (n=725)   0.389 (n=465)   0.440 (n=477)
+    0.062 (n=552)   0.057 (n=559)   0.068 (n=555)
+    0.003 (n=389)   0.009 (n=635)   0.014 (n=643)
+
+=== CROSS-VALIDATED INFORMATION TEST ===
+  5-fold CV x 3 repeats; bootstrap=500; permutations=100
+
+--- routing feature: agreement  (distinct values: 351) ---
+
+  target = top1   (positive rate 0.166, n_pos=829)
+  model               AUROC    (sd)   logloss    (sd)
+  prior only         0.5000            0.4492
+  conf               0.8756  0.0002    0.3046  0.0001
+  route              0.5963  0.0032    0.4358  0.0005
+  conf+route         0.8754  0.0003    0.3049  0.0002
+  gbm-conf           0.8728  0.0003    0.3061  0.0000
+  gbm-conf+route     0.8740  0.0005    0.3058  0.0006
+  Δ(conf+route - conf):  AUROC 95% CI [-0.0016, +0.0021]   logloss reduction 95% CI [-0.00144, +0.00088]
+  Δ(gbm-conf+route - gbm-conf):  AUROC 95% CI [-0.0006, +0.0046]   logloss reduction 95% CI [-0.00165, +0.00267]
+  permutation test (route shuffled within confidence deciles, additive spline model): logloss reduction obs=+0.00016  null mean=-0.00073  p=0.050
+
+  target = thr   (positive rate 0.100, n_pos=499)
+  model               AUROC    (sd)   logloss    (sd)
+  prior only         0.5000            0.3246
+  conf               0.7988  0.0012    0.2682  0.0004
+  route              0.5675  0.0031    0.3213  0.0002
+  conf+route         0.7981  0.0018    0.2688  0.0005
+  gbm-conf           0.7984  0.0032    0.2687  0.0015
+  gbm-conf+route     0.7975  0.0029    0.2700  0.0015
+  Δ(conf+route - conf):  AUROC 95% CI [-0.0042, +0.0033]   logloss reduction 95% CI [-0.00166, +0.00054]
+  Δ(gbm-conf+route - gbm-conf):  AUROC 95% CI [-0.0064, +0.0052]   logloss reduction 95% CI [-0.00309, +0.00079]
+  permutation test (route shuffled within confidence deciles, additive spline model): logloss reduction obs=-0.00029  null mean=-0.00081  p=0.149
+
+  target = aps   (positive rate 0.100, n_pos=499)
+  model               AUROC    (sd)   logloss    (sd)
+  prior only         0.5000            0.3246
+  conf               0.8004  0.0004    0.2680  0.0001
+  route              0.5754  0.0021    0.3203  0.0002
+  conf+route         0.7996  0.0006    0.2685  0.0003
+  gbm-conf           0.7995  0.0012    0.2688  0.0003
+  gbm-conf+route     0.7991  0.0023    0.2691  0.0008
+  Δ(conf+route - conf):  AUROC 95% CI [-0.0043, +0.0035]   logloss reduction 95% CI [-0.00162, +0.00089]
+  Δ(gbm-conf+route - gbm-conf):  AUROC 95% CI [-0.0057, +0.0068]   logloss reduction 95% CI [-0.00263, +0.00184]
+  permutation test (route shuffled within confidence deciles, additive spline model): logloss reduction obs=-0.00016  null mean=-0.00066  p=0.168
+
+################ asymmetric_span
+Loading caches
+  loaded /tmp/claude-0/-home-user-clean-cp-self/cafddae7-0d3a-5386-bcac-a713100a89e3/scratchpad/cache/prob_cache_CIFAR10_precalibration_seed2026_rot179.npz  views/N/K = (359, 1000, 10)
+  loaded /tmp/claude-0/-home-user-clean-cp-self/cafddae7-0d3a-5386-bcac-a713100a89e3/scratchpad/cache/prob_cache_CIFAR10_calibration_seed2026_rot179.npz  views/N/K = (359, 4000, 10)
+  pooled N=5000  top-1 accuracy=0.8342  alpha=0.1
+  global THR q=0.9395 (miscoverage rate 0.100); global APS q=0.9200 (miscoverage rate 0.100)
+
+=== DESCRIPTIVE ===
+
+  [asymmetric_span] Spearman(r, max-softmax) = +0.650   Spearman(r, top-1 error) = -0.373
+  top-1 error by quantile bin of r  (non-monotone => see the sequence):
+    r in [    2,     4]  n= 580  err=0.497  mean max-softmax=0.754
+    r in [    5,     9]  n= 651  err=0.320  mean max-softmax=0.891
+    r in [   10,    16]  n= 566  err=0.217  mean max-softmax=0.953
+    r in [   17,    24]  n= 631  err=0.113  mean max-softmax=0.972
+    r in [   25,    33]  n= 678  err=0.078  mean max-softmax=0.978
+    r in [   34,    44]  n= 611  err=0.059  mean max-softmax=0.989
+    r in [   45,    64]  n= 650  err=0.042  mean max-softmax=0.992
+    r in [   65,   358]  n= 633  err=0.036  mean max-softmax=0.994
+  top-1 error, rows = confidence tercile (low->high), cols = r tercile (low->high):
+    0.481 (n=1163)   0.341 (n=349)   0.200 (n=155)
+    0.098 (n=408)   0.047 (n=708)   0.056 (n=550)
+    0.014 (n=71)   0.008 (n=601)   0.010 (n=995)
+
+=== CROSS-VALIDATED INFORMATION TEST ===
+  5-fold CV x 3 repeats; bootstrap=500; permutations=100
+
+--- routing feature: asymmetric_span  (distinct values: 228) ---
+
+  target = top1   (positive rate 0.166, n_pos=829)
+  model               AUROC    (sd)   logloss    (sd)
+  prior only         0.5000            0.4492
+  conf               0.8756  0.0002    0.3046  0.0001
+  route              0.7850  0.0005    0.3709  0.0001
+  conf+route         0.8760  0.0002    0.3039  0.0003
+  gbm-conf           0.8728  0.0003    0.3061  0.0000
+  gbm-conf+route     0.8750  0.0004    0.3053  0.0004
+  Δ(conf+route - conf):  AUROC 95% CI [-0.0016, +0.0027]   logloss reduction 95% CI [-0.00102, +0.00260]
+  Δ(gbm-conf+route - gbm-conf):  AUROC 95% CI [-0.0004, +0.0056]   logloss reduction 95% CI [-0.00197, +0.00356]
+  permutation test (route shuffled within confidence deciles, additive spline model): logloss reduction obs=+0.00120  null mean=-0.00071  p=0.010
+
+  target = thr   (positive rate 0.100, n_pos=499)
+  model               AUROC    (sd)   logloss    (sd)
+  prior only         0.5000            0.3246
+  conf               0.7988  0.0012    0.2682  0.0004
+  route              0.6893  0.0048    0.3024  0.0006
+  conf+route         0.7964  0.0026    0.2692  0.0009
+  gbm-conf           0.7984  0.0032    0.2687  0.0015
+  gbm-conf+route     0.7936  0.0044    0.2711  0.0023
+  Δ(conf+route - conf):  AUROC 95% CI [-0.0069, +0.0023]   logloss reduction 95% CI [-0.00229, +0.00063]
+  Δ(gbm-conf+route - gbm-conf):  AUROC 95% CI [-0.0109, +0.0018]   logloss reduction 95% CI [-0.00469, -0.00021]
+  permutation test (route shuffled within confidence deciles, additive spline model): logloss reduction obs=-0.00011  null mean=-0.00077  p=0.119
+
+  target = aps   (positive rate 0.100, n_pos=499)
+  model               AUROC    (sd)   logloss    (sd)
+  prior only         0.5000            0.3246
+  conf               0.8004  0.0004    0.2680  0.0001
+  route              0.6892  0.0019    0.3020  0.0002
+  conf+route         0.7994  0.0009    0.2685  0.0002
+  gbm-conf           0.7995  0.0012    0.2688  0.0003
+  gbm-conf+route     0.7950  0.0012    0.2706  0.0005
+  Δ(conf+route - conf):  AUROC 95% CI [-0.0046, +0.0039]   logloss reduction 95% CI [-0.00171, +0.00096]
+  Δ(gbm-conf+route - gbm-conf):  AUROC 95% CI [-0.0098, +0.0012]   logloss reduction 95% CI [-0.00391, +0.00034]
+  permutation test (route shuffled within confidence deciles, additive spline model): logloss reduction obs=-0.00081  null mean=-0.00075  p=0.535
